@@ -1,4 +1,4 @@
-# ▓▒░ Limpia&Guarda v0.4 · by Teskadev
+# ▓▒░ Limpia&Guarda v0.4.1 · by Teskadev
 
 **Analizá** qué te come el disco → **limpiá** lo que sobra → **guardá en el HDD** externo lo que no usás (verificado con SHA-256).
 Sin fe, con hashes.
@@ -11,12 +11,23 @@ Sin fe, con hashes.
 
 ¿Lo querés como .exe? Doble clic en **`Crear EXE.bat`** y queda en `dist\LimpiaGuarda.exe`.
 
+## Instaladores (Windows y Mac)
+
+GitHub Actions (`.github/workflows/build.yml`) arma los instaladores en cada push a `main`. Quedan en la pestaña **Actions** → la última corrida → **Artifacts**:
+- `LimpiaGuarda-Windows-Instalador.exe`: instalador de Windows (con [instalador-windows.iss](instalador-windows.iss), Inno Setup). Instala para tu usuario sin pedir administrador, crea los accesos directos y se desinstala desde Configuración → Aplicaciones.
+- `LimpiaGuarda-Mac-AppleSilicon.dmg` y `LimpiaGuarda-Mac-Intel.dmg`.
+
+Para publicar una versión: cambiá `VERSION` en `limpia_guarda.py`, hacé commit y subí un tag con ese número (`git tag v0.5` y `git push origin v0.5`). Se crea un **Release** con los tres instaladores y las instrucciones de qué bajar.
+
+Links fijos a la última versión, para compartir:
+- https://github.com/teskabot/APP-Limpia-Guarda-by-TeskaDEV/releases/latest/download/LimpiaGuarda-Windows-Instalador.exe
+- https://github.com/teskabot/APP-Limpia-Guarda-by-TeskaDEV/releases/latest/download/LimpiaGuarda-Mac-AppleSilicon.dmg
+- https://github.com/teskabot/APP-Limpia-Guarda-by-TeskaDEV/releases/latest/download/LimpiaGuarda-Mac-Intel.dmg
+
 ## Mac
 
-La app de Mac la arma GitHub Actions (`.github/workflows/build.yml`) en cada push a `main`: queda en la pestaña **Actions** → la última corrida → **Artifacts**. Hay dos versiones: `apple-silicon` (M1, M2, M3…) e `intel`. Si subís un tag tipo `v0.5`, además se publica un **Release** con los `.zip` de Mac y el `.exe` de Windows.
-
 Para instalarla:
-1. Descomprimí el `.zip` y arrastrá **LimpiaGuarda.app** a **Aplicaciones**. Tiene que estar ahí para que AUTO funcione.
+1. Abrí el `.dmg` y arrastrá **LimpiaGuarda** a **Aplicaciones**. Tiene que estar ahí para que AUTO funcione.
 2. La primera vez macOS la bloquea porque no está firmada por Apple. Abrila, cerrá el aviso y andá a **Ajustes del Sistema → Privacidad y seguridad → "Abrir igualmente"**.
 3. Recomendado: en **Privacidad y seguridad → Acceso total al disco**, agregá LimpiaGuarda. Sin eso, macOS pregunta carpeta por carpeta y no deja ver el tamaño de la papelera.
 

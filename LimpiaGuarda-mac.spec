@@ -1,6 +1,9 @@
 # Receta de PyInstaller para armar LimpiaGuarda.app en una Mac.
 # Uso (en la Mac): python3 -m PyInstaller --noconfirm LimpiaGuarda-mac.spec
+import re
 from PyInstaller.utils.hooks import collect_all
+
+VERSION = re.search(r'^VERSION = "(.+)"', open("limpia_guarda.py", encoding="utf-8").read(), re.M).group(1)
 
 datas, binaries, hiddenimports = collect_all("tkinterdnd2")
 datas += [("limpiateska.png", ".")]
@@ -16,7 +19,7 @@ app = BUNDLE(
     bundle_identifier="com.teskadev.limpiaguarda",
     info_plist={
         "CFBundleDisplayName": "Limpia&Guarda",
-        "CFBundleShortVersionString": "0.4",
+        "CFBundleShortVersionString": VERSION,
         "NSHighResolutionCapable": True,
         "LSMinimumSystemVersion": "11.0",
         # aparece cuando la app le pide al Finder vaciar la papelera

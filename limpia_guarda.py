@@ -35,7 +35,7 @@ IS_MAC = sys.platform == "darwin"
 
 APP_NAME = "Limpia&Guarda"
 APP_BY = "by Teskadev"
-VERSION = "0.4"
+VERSION = "0.4.1"
 CHUNK = 8 * 1024 * 1024
 TMP_SUFFIX = ".lgpart"
 LOG_DIR = "_limpiaguarda_logs"

@@ -1,6 +1,6 @@
-# Arma la app para Mac (Apple Silicon e Intel) y para Windows en las máquinas de GitHub.
+# Arma los instaladores para Mac (Apple Silicon e Intel) y Windows en las máquinas de GitHub.
 # - Cada push: los archivos quedan en la pestaña Actions > la corrida > "Artifacts".
-# - Si subís un tag tipo v0.5: además se publica un Release con los .zip para descargar.
+# - Si subís un tag tipo v0.5: además se publica un Release con los instaladores para descargar.
 name: Build
 
 on:
@@ -19,9 +19,9 @@ jobs:
       matrix:
         include:
           - runner: macos-15         # Apple Silicon (M1, M2, M3…)
-            arch: apple-silicon
+            arch: AppleSilicon
           - runner: macos-15-intel   # Macs con Intel
-            arch: intel
+            arch: Intel
     runs-on: ${{ matrix.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -62,7 +62,7 @@ jobs:
           EOF
 
       - name: Prueba de tareas programadas (launchd)
-        continue-on-error: true   # si falla, se ve como aviso pero la app se arma igual
+        continue-on-error: true   # si falla, se ve como aviso pero el instalador se arma igual
         run: |
           python - <<'EOF'
           import limpia_guarda as lg, tempfile, time
@@ -98,14 +98,18 @@ jobs:
           kill -0 $PID && echo "la ventana sigue abierta: ok"
           kill $PID || true
 
-      - name: Comprimir
-        run: ditto -c -k --keepParent dist/LimpiaGuarda.app "LimpiaGuarda-mac-${{ matrix.arch }}.zip"
+      - name: Armar el .dmg (arrastrar a Aplicaciones)
+        run: |
+          mkdir dmg
+          cp -R dist/LimpiaGuarda.app dmg/
+          ln -s /Applications dmg/Aplicaciones
+          hdiutil create -volname "Limpia&Guarda" -srcfolder dmg -ov -format UDZO "LimpiaGuarda-Mac-${{ matrix.arch }}.dmg"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: LimpiaGuarda-mac-${{ matrix.arch }}
+          name: LimpiaGuarda-Mac-${{ matrix.arch }}
           path: |
-            LimpiaGuarda-mac-${{ matrix.arch }}.zip
+            LimpiaGuarda-Mac-${{ matrix.arch }}.dmg
             captura.png
           if-no-files-found: warn
 
@@ -116,14 +120,34 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Armar LimpiaGuarda.exe
+
+      - name: Armar la app
         run: |
           python -m pip install pyinstaller tkinterdnd2
-          python -m PyInstaller --noconfirm --onefile --windowed --name LimpiaGuarda --collect-all tkinterdnd2 --icon limpiateska.ico --add-data "limpiateska.ico;." limpia_guarda.py
+          python -m PyInstaller --noconfirm --windowed --name LimpiaGuarda --collect-all tkinterdnd2 --icon limpiateska.ico --add-data "limpiateska.ico;." limpia_guarda.py
+
+      - name: Armar el instalador (Inno Setup)
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          $version = (Select-String -Path limpia_guarda.py -Pattern '^VERSION = "(.+)"').Matches[0].Groups[1].Value
+          & $iscc "/DMyVersion=$version" instalador-windows.iss
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Probar el instalador
+        shell: pwsh
+        run: |
+          Start-Process out\LimpiaGuarda-Windows-Instalador.exe -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES" -Wait
+          $exe = "$env:LOCALAPPDATA\Programs\LimpiaGuarda\LimpiaGuarda.exe"
+          if (-not (Test-Path $exe)) { Write-Error "no se instaló en $exe"; exit 1 }
+          Get-ChildItem "$env:APPDATA\Microsoft\Windows\Start Menu\Programs" -Filter "Limpia*"
+          Write-Host "instalado ok: $exe"
+
       - uses: actions/upload-artifact@v4
         with:
-          name: LimpiaGuarda-windows
-          path: dist/LimpiaGuarda.exe
+          name: LimpiaGuarda-Windows
+          path: out/LimpiaGuarda-Windows-Instalador.exe
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
@@ -134,8 +158,30 @@ jobs:
       - name: Preparar archivos
         run: |
           mkdir out
-          cp LimpiaGuarda-mac-*/LimpiaGuarda-mac-*.zip out/
-          cp LimpiaGuarda-windows/LimpiaGuarda.exe out/
+          cp LimpiaGuarda-Mac-*/LimpiaGuarda-Mac-*.dmg out/
+          cp LimpiaGuarda-Windows/LimpiaGuarda-Windows-Instalador.exe out/
       - uses: softprops/action-gh-release@v2
         with:
+          make_latest: true
           files: out/*
+          body: |
+            ## ⬇ Qué descargar
+
+            | Tu computadora | Archivo |
+            |---|---|
+            | **Windows** | `LimpiaGuarda-Windows-Instalador.exe` |
+            | **Mac con chip Apple** (M1, M2, M3, M4…) | `LimpiaGuarda-Mac-AppleSilicon.dmg` |
+            | **Mac con Intel** | `LimpiaGuarda-Mac-Intel.dmg` |
+
+            Los archivos están abajo, en **Assets**. Los de "Source code" son el código fuente: no hacen falta.
+
+            ### Windows
+            1. Abrí `LimpiaGuarda-Windows-Instalador.exe`.
+            2. Si aparece **"Windows protegió su PC"**: tocá **Más información → Ejecutar de todas formas**. Aparece porque la app no tiene una firma digital paga.
+            3. Seguí el instalador. Queda en el menú Inicio y, si querés, en el Escritorio. Se desinstala desde **Configuración → Aplicaciones**.
+
+            ### Mac
+            ¿Qué chip tengo?  → menú  → **Acerca de esta Mac**: dice "Chip Apple M…" o "Procesador Intel".
+            1. Abrí el `.dmg` y arrastrá **LimpiaGuarda** a la carpeta **Aplicaciones**.
+            2. Abrila desde Aplicaciones. La primera vez macOS la bloquea porque no está firmada por Apple: cerrá el aviso, andá a **Ajustes del Sistema → Privacidad y seguridad** y tocá **Abrir igualmente**.
+            3. Recomendado: en **Privacidad y seguridad → Acceso total al disco**, agregá LimpiaGuarda.
