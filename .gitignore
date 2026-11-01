@@ -1,0 +1,6 @@
+__pycache__/
+build/
+dist/
+# la genera Crear EXE.bat en cada corrida (la de Mac sí va al repo)
+LimpiaGuarda.spec
+.DS_Store

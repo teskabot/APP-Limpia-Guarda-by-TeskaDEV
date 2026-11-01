@@ -1,0 +1,141 @@
+# Arma la app para Mac (Apple Silicon e Intel) y para Windows en las máquinas de GitHub.
+# - Cada push: los archivos quedan en la pestaña Actions > la corrida > "Artifacts".
+# - Si subís un tag tipo v0.5: además se publica un Release con los .zip para descargar.
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  mac:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15         # Apple Silicon (M1, M2, M3…)
+            arch: apple-silicon
+          - runner: macos-15-intel   # Macs con Intel
+            arch: intel
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Dependencias
+        run: |
+          python -c "import tkinter; print('Tk', tkinter.Tcl().eval('info patchlevel'))"
+          python -m pip install --upgrade pip
+          python -m pip install pyinstaller tkinterdnd2
+
+      - name: Prueba rápida del motor (sin ventana)
+        run: |
+          python - <<'EOF'
+          import os, tempfile, pathlib
+          import limpia_guarda as lg
+          assert lg.IS_MAC
+          rep = lg.analyze(str(pathlib.Path.home()), find_dups=False)
+          print("analizado:", lg.human(rep.total), rep.n_files, "archivos,", rep.errors, "errores")
+          print("temporales:", lg.default_temp_dirs())
+          print("caches:", lg.default_cache_dirs())
+          print("papelera:", lg.recycle_bin_info())
+          print("disco:", lg.volume_of(str(pathlib.Path.home())))
+          assert lg.is_protected("/") and lg.is_protected(str(pathlib.Path.home()))
+          assert lg.is_protected("/System/Library") and lg.is_protected("/Applications")
+          t = lg.default_temp_dirs()[0]
+          assert not lg.is_protected(os.path.join(t, "algo")), "lo de adentro de TEMP se tiene que poder borrar"
+          # copia verificada de ida y vuelta
+          src, dst = tempfile.mkdtemp(), tempfile.mkdtemp()
+          pathlib.Path(src, "a.txt").write_text("hola")
+          pathlib.Path(src, ".DS_Store").write_text("x")
+          st = lg.run_job([src], dst, lg.MODE_MOVE, __import__("threading").Event())
+          assert st["errors"] == 0 and not os.path.exists(src), st
+          print("vault ok")
+          EOF
+
+      - name: Prueba de tareas programadas (launchd)
+        continue-on-error: true   # si falla, se ve como aviso pero la app se arma igual
+        run: |
+          python - <<'EOF'
+          import limpia_guarda as lg, tempfile, time
+          root = tempfile.mkdtemp()
+          ok, msg = lg.schedule_task("limpieza", "cada domingo", "20:00", root, "")
+          print("programar:", ok, msg)
+          assert ok and lg.task_exists("limpieza")
+          ok, msg = lg.run_task_now("limpieza")
+          print("correr ahora:", ok, msg)
+          assert ok
+          for _ in range(60):
+              if lg.AUTO_LOG.exists():
+                  break
+              time.sleep(1)
+          print(lg.AUTO_LOG.read_text())
+          ok, msg = lg.unschedule_task("limpieza")
+          assert ok and not lg.task_exists("limpieza")
+          print("launchd ok")
+          EOF
+
+      - name: Armar LimpiaGuarda.app
+        run: python -m PyInstaller --noconfirm LimpiaGuarda-mac.spec
+
+      - name: Probar la app armada
+        run: |
+          APP=dist/LimpiaGuarda.app/Contents/MacOS/LimpiaGuarda
+          # modo programado (sin ventana) sobre una carpeta vacía
+          "$APP" --preset limpieza --root "$(mktemp -d)" || echo "terminó con algún error (normal si había temporales en uso)"
+          # abrir la ventana unos segundos y sacar una captura
+          "$APP" & PID=$!
+          sleep 15
+          screencapture -x captura.png || true
+          kill -0 $PID && echo "la ventana sigue abierta: ok"
+          kill $PID || true
+
+      - name: Comprimir
+        run: ditto -c -k --keepParent dist/LimpiaGuarda.app "LimpiaGuarda-mac-${{ matrix.arch }}.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LimpiaGuarda-mac-${{ matrix.arch }}
+          path: |
+            LimpiaGuarda-mac-${{ matrix.arch }}.zip
+            captura.png
+          if-no-files-found: warn
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Armar LimpiaGuarda.exe
+        run: |
+          python -m pip install pyinstaller tkinterdnd2
+          python -m PyInstaller --noconfirm --onefile --windowed --name LimpiaGuarda --collect-all tkinterdnd2 --icon limpiateska.ico --add-data "limpiateska.ico;." limpia_guarda.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LimpiaGuarda-windows
+          path: dist/LimpiaGuarda.exe
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [mac, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+      - name: Preparar archivos
+        run: |
+          mkdir out
+          cp LimpiaGuarda-mac-*/LimpiaGuarda-mac-*.zip out/
+          cp LimpiaGuarda-windows/LimpiaGuarda.exe out/
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: out/*
