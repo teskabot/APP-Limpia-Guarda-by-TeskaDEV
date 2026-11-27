@@ -24,9 +24,9 @@ jobs:
             arch: Intel
     runs-on: ${{ matrix.runner }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -105,7 +105,7 @@ jobs:
           ln -s /Applications dmg/Aplicaciones
           hdiutil create -volname "Limpia&Guarda" -srcfolder dmg -ov -format UDZO "LimpiaGuarda-Mac-${{ matrix.arch }}.dmg"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: LimpiaGuarda-Mac-${{ matrix.arch }}
           path: |
@@ -116,8 +116,8 @@ jobs:
   windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
 
@@ -144,7 +144,7 @@ jobs:
           Get-ChildItem "$env:APPDATA\Microsoft\Windows\Start Menu\Programs" -Filter "Limpia*"
           Write-Host "instalado ok: $exe"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: LimpiaGuarda-Windows
           path: out/LimpiaGuarda-Windows-Instalador.exe
@@ -154,13 +154,13 @@ jobs:
     needs: [mac, windows]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
       - name: Preparar archivos
         run: |
           mkdir out
           cp LimpiaGuarda-Mac-*/LimpiaGuarda-Mac-*.dmg out/
           cp LimpiaGuarda-Windows/LimpiaGuarda-Windows-Instalador.exe out/
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           make_latest: true
           files: out/*
