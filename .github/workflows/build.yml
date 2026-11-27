@@ -1,6 +1,6 @@
 # Arma los instaladores para Mac (Apple Silicon e Intel) y Windows en las máquinas de GitHub.
 # - Cada push: los archivos quedan en la pestaña Actions > la corrida > "Artifacts".
-# - Si subís un tag tipo v0.5: además se publica un Release con los instaladores para descargar.
+# - Si subís un tag tipo v1.0.0: además se publica un Release con los instaladores para descargar.
 name: Build
 
 on:

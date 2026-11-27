@@ -35,7 +35,7 @@ IS_MAC = sys.platform == "darwin"
 
 APP_NAME = "Limpia&Guarda"
 APP_BY = "by Teskadev"
-VERSION = "0.4.1"
+VERSION = "1.0.0"
 CHUNK = 8 * 1024 * 1024
 TMP_SUFFIX = ".lgpart"
 LOG_DIR = "_limpiaguarda_logs"
@@ -1135,7 +1135,7 @@ PRESETS = {
     "limpieza": dict(
         title="Limpieza semanal", action="delete", recs=("bin", "temp", "cache", "deps", "installers"),
         desc="Borra solo lo [SEGURO]: papelera, temporales, caches, dependencias de proyectos quietos "
-             "e instaladores viejos de Descargas. Nunca toca lo de REVISAR ni lo del VAULT."),
+             "e instaladores viejos de Descargas. Nunca toca lo de REVISAR ni lo del HDD."),
     "sesiones": dict(
         title="Sesiones viejas", action="vault", recs=("projects", "media"),
         desc="Guarda en el HDD (MOVER, verificado con SHA-256) los proyectos de DAW/video y la media pesada "
@@ -1568,21 +1568,105 @@ def reveal(path):
 
 
 # ───────────────────────────── GUI ─────────────────────────────
+# Estética v1.0: terminal limpia. Negro, texto claro y pocos colores, cada uno con UN significado:
+#   VERDE = lo principal (botones, limpiar, listo) · NARANJA = números y avisos · CIAN = el HDD · ROJO = error
+# Cada pestaña es un asistente: una pregunta por pantalla y un botón principal.
 
-BG = "#0a0a0a"
-PANEL = "#101510"
-FG = "#33ff66"
-DIM = "#1e7a3c"
-TEXT = "#c8ffd8"
-MUTED = "#5f7f6a"
-WARN = "#ffcc33"
-ERR = "#ff5c7a"
-CYAN = "#5ce1ff"
+BG = "#06090a"
+PANEL = "#0c1213"
+PANEL_HI = "#131c1d"
+LINE = "#1b2a2b"
+LINE_HI = "#2c4446"
+DOT = "#10201f"
+TEXT = "#e9efe9"
+MUTED = "#6f817e"
+FAINT = "#3a4a47"
+GREEN = "#a8f03c"    # 1º lo principal: botones, pestaña activa, limpiar, listo
+ORANGE = "#ff8a3d"   # 2º números, contadores, revisar y avisos
+CYAN = "#4fd2e0"     # 3º todo lo del HDD
+RED = "#ff4b5c"      # borrar / error
+TEAL = GREEN         # acento de los widgets propios
+LIME = GREEN
+FG, WARN, ERR = GREEN, ORANGE, RED   # alias semánticos (log y avisos)
+
 MONO = "Consolas" if IS_WIN else ("Menlo" if IS_MAC else "DejaVu Sans Mono")
+_FONTS: dict = {}
+
+
+def mix(c1, c2, t):
+    """Mezcla dos colores #rrggbb (t=0 → c1, t=1 → c2)."""
+    a = [int(c1[i:i + 2], 16) for i in (1, 3, 5)]
+    b = [int(c2[i:i + 2], 16) for i in (1, 3, 5)]
+    return "#" + "".join(f"{round(x + (y - x) * t):02x}" for x, y in zip(a, b))
+
+
+def font(size, bold=False, display=False):
+    """Todo en monoespaciada de terminal; display = negrita."""
+    return (MONO, size, "bold" if (bold or display) else "normal")
+
+
+def fit(text, fnt, maxw):
+    """Recorta el texto con … para que entre en maxw píxeles."""
+    f = _FONTS.get(fnt)
+    if f is None:
+        f = _FONTS[fnt] = tkfont.Font(font=fnt)
+    if maxw <= 0:
+        return ""
+    if f.measure(text) <= maxw:
+        return text
+    lo, hi = 0, len(text)
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if f.measure(text[:mid] + "…") <= maxw:
+            lo = mid
+        else:
+            hi = mid - 1
+    return text[:lo] + "…" if lo else ""
+
+
+def hud_dots(c, x0, y0, x1, y1, color=DOT, step=18):
+    for x in range(int(x0) + step // 2, int(x1), step):
+        for y in range(int(y0) + step // 2, int(y1), step):
+            c.create_rectangle(x, y, x + 1, y + 1, fill=color, outline="")
+
+
+def hud_frame(c, x0, y0, x1, y1, color=TEAL, line=LINE, k=10, fill=""):
+    """Marco fino con las cuatro esquinas marcadas."""
+    c.create_rectangle(x0, y0, x1, y1, outline=line, fill=fill)
+    for x, y, dx, dy in ((x0, y0, 1, 1), (x1, y0, -1, 1), (x0, y1, 1, -1), (x1, y1, -1, -1)):
+        c.create_line(x, y + dy * k, x, y, x + dx * k, y, fill=color, width=2)
+
+
+def hud_hatch(c, x0, y0, x1, y1, color, step=6, tag=None):
+    """Barra rayada en diagonal (como las barras de los HUD)."""
+    if x1 - x0 < 1:
+        return
+    c.create_rectangle(x0, y0, x1, y1, fill=mix(color, BG, 0.78), outline="", tags=tag)
+    h = y1 - y0
+    sx = x0 - h
+    while sx < x1:
+        t0, t1 = max(0, x0 - sx), min(h, x1 - sx)
+        if t0 < t1:
+            c.create_line(sx + t0, y1 - t0, sx + t1, y1 - t1, fill=color, width=2, tags=tag)
+        sx += step
+
+
+def glow_text(c, x, y, text, color, fnt, anchor="nw"):
+    """Texto con halo tenue alrededor. Devuelve los ids, el principal al final."""
+    ids = []
+    for r, t in ((2, 0.86), (1, 0.62)):
+        halo = mix(color, BG, t)
+        ids += [c.create_text(x + dx, y + dy, text=text, fill=halo, font=fnt, anchor=anchor)
+                for dx, dy in ((-r, 0), (r, 0), (0, r), (0, -r))]
+    ids.append(c.create_text(x, y, text=text, fill=color, font=fnt, anchor=anchor))
+    return ids
+
 
 if tk is not None:
+    import tkinter.font as tkfont
+
     class FlatButton(tk.Label):
-        """Botón para Mac: los tk.Button de macOS ignoran los colores, así que se dibuja con un Label."""
+        """Botón dibujado con un Label: se ve igual en Windows y Mac (los tk.Button de macOS ignoran los colores)."""
 
         def __init__(self, parent, command=None, **kw):
             self._active = (kw.pop("activebackground", TEXT), kw.pop("activeforeground", BG))
@@ -1605,6 +1689,7 @@ if tk is not None:
         def _click(self, e):
             inside = 0 <= e.x < self.winfo_width() and 0 <= e.y < self.winfo_height()
             if inside and str(self.cget("state")) != "disabled" and self._command:
+                self._set_hover(False)
                 self._command()
 
         def invoke(self):
@@ -1622,13 +1707,198 @@ if tk is not None:
             return super().configure(cnf, **kw)
 
         config = configure
+
+    class Tip:
+        """Cartelito de ayuda que aparece al dejar el mouse quieto sobre algo."""
+
+        def __init__(self, w, text):
+            self.w, self.text, self.top, self.job = w, text, None, None
+            w.bind("<Enter>", self._arm, add="+")
+            w.bind("<Leave>", self._hide, add="+")
+            w.bind("<ButtonPress>", self._hide, add="+")
+
+        def _arm(self, e=None):
+            self._hide()
+            self.job = self.w.after(550, self._show)
+
+        def _show(self):
+            self.job = None
+            if self.top or not self.w.winfo_exists():
+                return
+            x = self.w.winfo_rootx() + 8
+            y = self.w.winfo_rooty() + self.w.winfo_height() + 6
+            self.top = t = tk.Toplevel(self.w)
+            t.wm_overrideredirect(True)
+            t.configure(bg=LINE_HI)
+            tk.Label(t, text=self.text, bg=PANEL, fg=TEXT, font=font(9), justify="left", wraplength=380,
+                     padx=10, pady=6).pack(padx=1, pady=1)
+            t.wm_geometry(f"+{x}+{y}")
+
+        def _hide(self, e=None):
+            if self.job:
+                self.w.after_cancel(self.job)
+                self.job = None
+            if self.top:
+                self.top.destroy()
+                self.top = None
+
+    class HudTabs:
+        """Pestañas propias (las de ttk no se dejan pintar bien): texto + subrayado del activo."""
+
+        def __init__(self, bar, body, on_change=None, size=10):
+            self.bar, self.body, self.on_change, self.size = bar, body, on_change, size
+            self.tabs: list = []   # (frame, label, subrayado)
+            self.cur = None
+
+        def add(self, frame, text, tip=None):
+            cell = tk.Frame(self.bar, bg=BG)
+            cell.pack(side="left", padx=(0, 2))
+            lbl = tk.Label(cell, text=text, bg=BG, fg=MUTED, font=font(self.size), padx=14, pady=8,
+                           cursor="hand2")
+            lbl.pack()
+            line = tk.Frame(cell, bg=BG, height=2)
+            line.pack(fill="x")
+            i = len(self.tabs)
+            lbl.bind("<Button-1>", lambda e: self.select(i))
+            lbl.bind("<Enter>", lambda e: self._paint(i, hover=True))
+            lbl.bind("<Leave>", lambda e: self._paint(i))
+            if tip:
+                Tip(lbl, tip)
+            self.tabs.append((frame, lbl, line))
+            if self.cur is None:
+                self.select(0)
+            else:
+                self._paint(i)
+
+        def add_hidden(self, frame):
+            """Pestaña sin botón en la barra (se abre desde un link)."""
+            cell = tk.Frame(self.bar, bg=BG)
+            self.tabs.append((frame, tk.Label(cell), tk.Frame(cell)))
+
+        def sep(self, text):
+            tk.Label(self.bar, text=text, bg=BG, fg=FAINT, font=font(8, True), padx=8).pack(side="left")
+
+        def index(self):
+            return self.cur
+
+        def frame(self):
+            return self.tabs[self.cur][0]
+
+        def select(self, which):
+            i = which if isinstance(which, int) else next(j for j, t in enumerate(self.tabs) if t[0] is which)
+            if i == self.cur:
+                return
+            if self.cur is not None:
+                self.tabs[self.cur][0].pack_forget()
+            prev, self.cur = self.cur, i
+            self.tabs[i][0].pack(in_=self.body, fill="both", expand=True)
+            for j in range(len(self.tabs)):
+                self._paint(j)
+            if self.on_change and prev is not None:
+                self.on_change(i)
+
+        def _paint(self, i, hover=False):
+            _f, lbl, line = self.tabs[i]
+            on = i == self.cur
+            lbl.configure(fg=GREEN if on else (TEXT if hover else MUTED), bg=BG)
+            line.configure(bg=GREEN if on else BG)
+
+    class HudProgress(tk.Canvas):
+        """Barra de progreso rayada. Imita lo que se usaba de ttk.Progressbar (mode, start, stop, value)."""
+
+        def __init__(self, parent):
+            super().__init__(parent, height=8, bg=BG, highlightthickness=0)
+            self._value, self._mode, self._job, self._phase = 0, "determinate", None, 0
+            self.bind("<Configure>", lambda e: self._draw())
+
+        def __setitem__(self, k, v):
+            if k == "value":
+                self._value = v
+                self._draw()
+            else:
+                super().__setitem__(k, v)
+
+        def __getitem__(self, k):
+            return self._value if k == "value" else super().__getitem__(k)
+
+        def configure(self, cnf=None, **kw):
+            if "mode" in kw:
+                self._mode = kw.pop("mode")
+                self._draw()
+            kw.pop("maximum", None)
+            if cnf or kw:
+                return super().configure(cnf, **kw)
+
+        config = configure
+
+        def start(self, interval=12):
+            self.stop()
+            self._tick(max(25, interval * 3))
+
+        def _tick(self, ms):
+            self._phase += 1
+            self._job = self.after(ms, self._tick, ms)
+            self._draw()
+
+        def stop(self):
+            if self._job:
+                self.after_cancel(self._job)
+                self._job = None
+            self._draw()
+
+        def _draw(self):
+            self.delete("all")
+            w, h = self.winfo_width(), self.winfo_height()
+            if w < 4:
+                return
+            self.create_rectangle(0, 0, w - 1, h - 1, outline=LINE, fill=PANEL)
+            if self._mode == "indeterminate" and self._job:
+                seg = max(80, w // 6)
+                x = (self._phase * 10) % (w + seg) - seg
+                hud_hatch(self, max(1, x), 1, min(w - 1, x + seg), h - 1, TEAL)
+            elif self._value > 0:
+                hud_hatch(self, 1, 1, 1 + (w - 2) * min(1000, self._value) / 1000, h - 1, TEAL)
+
+    class HudCheck(tk.Label):
+        """Casilla [■] / [ ] atada a un BooleanVar."""
+
+        def __init__(self, parent, text, var, color=TEAL, bg=BG):
+            super().__init__(parent, bg=bg, font=font(10), cursor="hand2", anchor="w")
+            self.var, self.text, self.color = var, text, color
+            self.bind("<Button-1>", lambda e: var.set(not var.get()))
+            var.trace_add("write", lambda *a: self._paint())
+            self._paint()
+
+        def _paint(self):
+            on = bool(self.var.get())
+            self.configure(text=("[■] " if on else "[ ] ") + self.text, fg=self.color if on else MUTED)
+
+    class HudChoice(tk.Frame):
+        """Selector segmentado: un botón prendido por vez, atado a un StringVar."""
+
+        def __init__(self, parent, var, options, color=TEAL):
+            super().__init__(parent, bg=LINE, highlightthickness=1, highlightbackground=LINE)
+            self.var, self.color, self.cells = var, color, {}
+            for i, (val, label) in enumerate(options):
+                cell = tk.Label(self, text=label, font=font(9, True), padx=10, pady=4, cursor="hand2")
+                cell.pack(side="left", padx=(0 if i == 0 else 1, 0))
+                cell.bind("<Button-1>", lambda e, v=val: var.set(v))
+                self.cells[val] = cell
+            var.trace_add("write", lambda *a: self._paint())
+            self._paint()
+
+        def _paint(self):
+            for v, cell in self.cells.items():
+                on = self.var.get() == v
+                cell.configure(bg=self.color if on else PANEL, fg=BG if on else MUTED)
+
 MAX_ROWS = 300
 
 # colores del mapa (relleno de cada tipo de bloque)
-MAP_COLORS = [("media / RAW", "#1d5f70"), ("proyecto DAW/video", "#6a3d7a"),
-              ("instalador / comprimido", "#7a5c12"), ("otro archivo", "#1f6b3a"),
-              ("carpeta (detalle chico)", "#173d25"), ("archivos chicos juntos", "#1a201a")]
-MAP_DIR_BG = ("#0d120e", "#111912")
+MAP_COLORS = [("media / RAW", "#17566a"), ("proyecto DAW/video", "#5b3a78"),
+              ("instalador / comprimido", "#7a4a1a"), ("otro archivo", "#1d5a4f"),
+              ("carpeta (detalle chico)", "#13353a"), ("archivos chicos juntos", "#111b1d")]
+MAP_DIR_BG = ("#081013", "#0c171a")
 MAP_HEAD = 15
 MAP_MAX_ITEMS = 5000
 
@@ -1655,19 +1925,20 @@ class TreeMapView:
     def __init__(self, app, parent):
         self.app = app
         top = tk.Frame(parent, bg=BG)
-        top.pack(fill="x", pady=(4, 4))
+        top.pack(fill="x", pady=(0, 6))
         self.b_up = app._btn(top, "▲ SUBIR", self.up)
         self.b_up.pack(side="left")
+        Tip(self.b_up, "Vuelve a la carpeta de arriba (también con clic derecho sobre el mapa).")
         self.crumb = tk.StringVar(value="")
-        tk.Label(top, textvariable=self.crumb, bg=BG, fg=TEXT, font=(MONO, 9), anchor="w").pack(
-            side="left", fill="x", expand=True, padx=8)
-        self.canvas = tk.Canvas(parent, bg=BG, highlightthickness=1, highlightbackground=DIM, cursor="crosshair")
+        tk.Label(top, textvariable=self.crumb, bg=BG, fg=TEXT, font=font(9), anchor="w").pack(
+            side="left", fill="x", expand=True, padx=10)
+        self.canvas = tk.Canvas(parent, bg=BG, highlightthickness=1, highlightbackground=LINE, cursor="crosshair")
         self.canvas.pack(fill="both", expand=True)
         leg = tk.Frame(parent, bg=BG)
-        leg.pack(fill="x", pady=(4, 0))
+        leg.pack(fill="x", pady=(6, 0))
         for name, color in MAP_COLORS:
             tk.Label(leg, text="  ", bg=color).pack(side="left", padx=(0, 4))
-            tk.Label(leg, text=name, bg=BG, fg=MUTED, font=(MONO, 8)).pack(side="left", padx=(0, 12))
+            tk.Label(leg, text=name, bg=BG, fg=MUTED, font=font(8)).pack(side="left", padx=(0, 12))
         self.stack: list = []
         self.items: dict = {}
         self.sel = None
@@ -1722,10 +1993,13 @@ class TreeMapView:
         c.delete("all")
         self.items.clear()
         w, h = c.winfo_width(), c.winfo_height()
-        self.b_up.configure(state="normal" if len(self.stack) > 1 else "disabled")
+        self.app._set_btn(self.b_up, len(self.stack) > 1)
         if not self.stack:
             self.crumb.set("")
-            c.create_text(w / 2, h / 2, text="analizá una carpeta para ver el mapa", fill=MUTED, font=(MONO, 10))
+            hud_dots(c, 0, 0, w, h)
+            c.create_text(w / 2, h / 2 - 10, text="sin datos", fill=MUTED, font=font(16))
+            c.create_text(w / 2, h / 2 + 18, text="analizá una carpeta en LIMPIAR para ver el mapa", fill=MUTED,
+                          font=font(10))
             self._hl = self._sel_rect = None
             return
         cur = self.stack[-1]
@@ -1735,7 +2009,7 @@ class TreeMapView:
         self._count = 0
         self._draw(cur, 1, 1, w - 2, h - 2, 0, None)
         self._hl = c.create_rectangle(-9, -9, -9, -9, outline=TEXT, width=1)
-        self._sel_rect = c.create_rectangle(-9, -9, -9, -9, outline=WARN, width=2)
+        self._sel_rect = c.create_rectangle(-9, -9, -9, -9, outline=ORANGE, width=2)
         if self.sel is not None:
             for node, box, _parent in self.items.values():
                 if node is self.sel:
@@ -1750,11 +2024,11 @@ class TreeMapView:
         entry = (node, (x, y, w, h), parent)
         container = node.kind == "dir" and bool(node.kids)
         fill = MAP_DIR_BG[depth % 2] if container else map_fill(node)
-        rid = c.create_rectangle(x, y, x + w, y + h, fill=fill, outline=BG if not container else DIM)
+        rid = c.create_rectangle(x, y, x + w, y + h, fill=fill, outline=BG if not container else LINE)
         self.items[rid] = entry
         if container:
             if w > 34 and h > MAP_HEAD + 10:
-                self._label(x + 3, y + 1, w - 6, f"{node.name}  {human(node.size)}", FG, entry)
+                self._label(x + 3, y + 1, w - 6, f"{node.name}  {human(node.size)}", CYAN, entry)
                 inner = (x + 2, y + MAP_HEAD, w - 4, h - MAP_HEAD - 2)
             elif w > 8 and h > 8:
                 inner = (x + 1, y + 1, w - 2, h - 2)
@@ -1774,7 +2048,7 @@ class TreeMapView:
             return
         if len(text) > maxc:
             text = text[:maxc - 1] + "…"
-        tid = self.canvas.create_text(x, y, text=text, anchor="nw", fill=color, font=(MONO, 8))
+        tid = self.canvas.create_text(x, y, text=text, anchor="nw", fill=color, font=font(8))
         self.items[tid] = entry
 
     def _place(self, rect, box):
@@ -1826,48 +2100,66 @@ class TreeMapView:
 
 
 CARD_DEFAULT = {"seguro": True, "revisar": False, "vault": True}
-SAFETY_COLOR = {"seguro": FG, "revisar": WARN, "vault": CYAN}
-SAFETY_TAG = {"seguro": "SEGURO", "revisar": "REVISAR", "vault": "→ HDD"}
-DISK_USED = "#1b4d2c"
+SAFETY_COLOR = {"seguro": GREEN, "revisar": ORANGE, "vault": CYAN}
+WRAP = 640          # ancho de la columna central de cada paso
 RULE_TXT = ("regla #1: nada se borra sin tu OK · lo que va al HDD se verifica con SHA-256 antes de borrar "
             "el original · todo queda anotado en un log")
+# pasos de cada pestaña: (cuántos puntitos se ven, último índice que es "listo")
+STEPS = {"clean": 3, "keep": 3, "auto": 2}
+AUTO_COLOR = {"limpieza": GREEN, "sesiones": CYAN}
+AUTO_EXTRA = {"limpieza": "En automático nunca vacía la papelera (es tu red de seguridad). Las caches "
+                          f"usadas en los últimos {CACHE_QUIET_DAYS} días se saltean, por si VS Code o un proyecto "
+                          "está abierto.",
+              "sesiones": "Si el HDD no está conectado a esa hora, no hace nada. Si algo da un aviso (OneDrive, "
+                          "mismo disco), ese elemento se saltea."}
 
 
 class App:
+    """La ventana. Cada pestaña es un asistente: un paso por pantalla, una pregunta y un botón principal."""
+
     def __init__(self, root, dnd_files=None):
         self.root = root
         self.q: queue.Queue = queue.Queue()
         self.cancel = threading.Event()
         self.worker = None
         self.cfg = load_config()
-        self.sources: list[str] = []
-        self._saved_sources = None   # lista manual que se guarda mientras GUARDAR usa la suya
+        self.sources: list[str] = []        # lo que elegiste a mano para el HDD
+        self._saved_sources = None
+        self.dnd_files = dnd_files
         self.dest = tk.StringVar(value=self.cfg.get("dest", ""))
         self.mode = tk.StringVar(value=self.cfg.get("mode", MODE_MOVE))
         self.age = tk.StringVar(value=self.cfg.get("age", AGE_OPTIONS[0][0]))
         self.full_path = tk.BooleanVar(value=self.cfg.get("full_path", False))
         self.an_root = tk.StringVar(value=self.cfg.get("an_root", str(Path.home())))
-        self.status = tk.StringVar(value="listo. dale a ▶ ANALIZAR: miro todo sin tocar nada.")
+        self.status = tk.StringVar(value="listo.")
         self.stats_txt = tk.StringVar(value="")
         self.last_msg = tk.StringVar(value="")
-        self.an_summary = tk.StringVar(value="todavía no analizaste nada. arrancá en INICIO.")
         self.an_hint = tk.StringVar(value="")
         self.map_hint = tk.StringVar(value="clic = seleccionar · doble clic = entrar · clic derecho = subir")
-        self.total_var = tk.StringVar(value="")
-        self.dest_txt = tk.StringVar(value="")
+        self.ex_view = tk.StringVar(value="mapa")
         self.report: Report | None = None
         self.iid_paths: dict = {}
         self.iid_hint: dict = {}
         self.path_info: dict = {}   # ruta -> (tamaño, safety)
-        self.auto_ui: dict = {}
         self.cards_on: dict = dict(self.cfg.get("cards", {}))
-        self.cards: dict = {}
         self.disk = None            # (drive, total, used, free) del disco analizado
-        self._anims: dict = {}
-        self._scan_phase = None     # animación de barrido mientras analiza
-        self._flash = None          # (texto, hasta) sobre la barra del disco
         self._is_busy = False
-        self.hero = {"clean": 0.0, "keep": 0.0, "free": 0.0}
+        self.busy_kind = None       # analyze | delete | vault
+        self._freed_total = 0
+        self.step = {"clean": 0, "keep": 0, "auto": 0}
+        self.view: dict = {}
+        self.result: dict = {}      # clean / keep -> resultado de la última corrida
+        self.show_opts = False
+        self.auto_sel = "limpieza"
+        saved = self.cfg.get("auto", {})
+        self.auto_vars = {k: (tk.StringVar(value=saved.get(k, {}).get("when", AUTO_DEFAULTS[k][0])),
+                              tk.StringVar(value=saved.get(k, {}).get("hour", AUTO_DEFAULTS[k][1])))
+                          for k in PRESETS}
+        self._enter = None          # acción del botón principal (tecla Enter)
+        self._last_render = 0.0
+        for var in (self.mode, self.age):  # cambiar una opción re-dibuja el paso de confirmar
+            var.trace_add("write", lambda *a: self.step["keep"] == 2 and not self._is_busy
+                          and self.root.after_idle(lambda: self._render("keep")))
 
         root.title(f"{APP_NAME} v{VERSION} · {APP_BY}")
         try:  # icono: junto al .py, o dentro del EXE de PyInstaller
@@ -1880,14 +2172,12 @@ class App:
         except Exception:  # noqa: BLE001
             pass
         root.configure(bg=BG)
-        root.geometry("1000x860")
-        root.minsize(800, 700)
+        root.geometry("1040x780")
+        root.minsize(820, 640)
         root.protocol("WM_DELETE_WINDOW", self._on_close)
         self._style()
-        self._build(dnd_files)
-        self._refresh_disk(animate=False)
-        self._update_totals(animate=False)
-        self._render_cards()
+        self._build()
+        self._refresh_disk()
         self._blink()
         self.root.after(80, self._poll)
 
@@ -1895,246 +2185,598 @@ class App:
     def _style(self):
         s = ttk.Style(self.root)
         s.theme_use("clam")
-        s.configure("Vault.Horizontal.TProgressbar", troughcolor=PANEL, background=FG,
-                    bordercolor=DIM, lightcolor=FG, darkcolor=FG, thickness=10)
-        s.configure("Vault.TNotebook", background=BG, borderwidth=0, tabmargins=(0, 4, 0, 0))
-        s.configure("Vault.TNotebook.Tab", background=PANEL, foreground=MUTED, padding=(14, 6),
-                    font=(MONO, 10, "bold"), borderwidth=0, bordercolor=DIM, lightcolor=PANEL)
-        s.map("Vault.TNotebook.Tab", background=[("selected", DIM)], foreground=[("selected", BG)])
-        s.configure("Sub.TNotebook", background=BG, borderwidth=0)
-        s.configure("Sub.TNotebook.Tab", background=BG, foreground=MUTED, padding=(12, 4),
-                    font=(MONO, 9, "bold"), borderwidth=0, lightcolor=BG)
-        s.map("Sub.TNotebook.Tab", background=[("selected", PANEL)], foreground=[("selected", FG)])
         s.configure("Vault.Treeview", background=PANEL, fieldbackground=PANEL, foreground=TEXT,
-                    rowheight=22, font=(MONO, 9), borderwidth=0)
-        s.configure("Vault.Treeview.Heading", background=BG, foreground=FG, font=(MONO, 9, "bold"),
-                    relief="flat", borderwidth=0)
+                    rowheight=24, font=font(9), borderwidth=0)
+        s.configure("Vault.Treeview.Heading", background=BG, foreground=CYAN, font=font(9, True),
+                    relief="flat", borderwidth=0, padding=(6, 4))
         s.map("Vault.Treeview.Heading", background=[("active", PANEL)])
-        s.map("Vault.Treeview", background=[("selected", DIM)], foreground=[("selected", "#ffffff")])
+        s.map("Vault.Treeview", background=[("selected", LINE_HI)], foreground=[("selected", "#ffffff")])
+        s.layout("Vault.Treeview", [("Vault.Treeview.treearea", {"sticky": "nswe"})])
         s.configure("Vault.Vertical.TScrollbar", background=PANEL, troughcolor=BG, bordercolor=BG,
-                    arrowcolor=FG, lightcolor=PANEL, darkcolor=PANEL)
+                    arrowcolor=MUTED, lightcolor=PANEL, darkcolor=PANEL, gripcount=0)
+        s.map("Vault.Vertical.TScrollbar", background=[("active", LINE_HI)])
         s.configure("Vault.TCombobox", fieldbackground=PANEL, background=PANEL, foreground=TEXT,
-                    arrowcolor=FG, bordercolor=DIM, lightcolor=PANEL, darkcolor=PANEL)
+                    arrowcolor=GREEN, bordercolor=LINE_HI, lightcolor=PANEL, darkcolor=PANEL, padding=5)
         s.map("Vault.TCombobox", fieldbackground=[("readonly", PANEL)], foreground=[("readonly", TEXT)],
               selectbackground=[("readonly", PANEL)], selectforeground=[("readonly", TEXT)])
         self.root.option_add("*TCombobox*Listbox.background", PANEL)
         self.root.option_add("*TCombobox*Listbox.foreground", TEXT)
-        self.root.option_add("*TCombobox*Listbox.selectBackground", DIM)
-        self.root.option_add("*TCombobox*Listbox.font", (MONO, 10))
+        self.root.option_add("*TCombobox*Listbox.selectBackground", LINE_HI)
+        self.root.option_add("*TCombobox*Listbox.font", font(10))
 
-    # ── widgets helpers
-    def _btn(self, parent, text, cmd, accent=False, danger=False, color=None, big=False):
+    # ── piezas chicas
+    def _btn(self, parent, text, cmd, accent=False, danger=False, color=None, big=False, tip=None):
         if color or accent:
-            bg, fg = (color or FG), BG
+            bg, fg = (color or GREEN), BG
         else:
-            bg, fg = PANEL, (ERR if danger else FG)
-        b = (FlatButton if IS_MAC else tk.Button)(parent, text=text, command=cmd, font=(MONO, 12 if big else 10, "bold"),
-                      bg=bg, fg=fg, activebackground=TEXT, activeforeground=BG, relief="flat",
-                      bd=0, padx=16 if big else 12, pady=9 if big else 5, cursor="hand2", disabledforeground=MUTED,
-                      highlightthickness=1, highlightbackground=ERR if danger else (color or DIM))
-        b._colors = (bg, fg)  # para restaurar al habilitar
+            bg, fg = PANEL, (RED if danger else TEXT)
+        b = FlatButton(parent, text=text, command=cmd, font=font(12 if big else 10, True),
+                       bg=bg, fg=fg, activebackground=TEXT, activeforeground=BG, relief="flat",
+                       bd=0, padx=28 if big else 12, pady=10 if big else 5, cursor="hand2", disabledforeground=FAINT,
+                       highlightthickness=1, highlightbackground=RED if danger else (color or LINE_HI))
+        b._colors = (bg, fg)
+        b._border = RED if danger else (color or LINE_HI)
+        if tip:
+            Tip(b, tip)
         return b
 
-    def _label(self, parent, text=None, color=MUTED, size=9, bold=False, var=None):
-        return tk.Label(parent, text=text, textvariable=var, bg=BG, fg=color,
-                        font=(MONO, size, "bold" if bold else "normal"), anchor="w", justify="left")
+    @staticmethod
+    def _set_btn(b, on):
+        bg, fg = b._colors
+        b.configure(state="normal" if on else "disabled", bg=bg if on else PANEL, fg=fg if on else FAINT,
+                    highlightbackground=getattr(b, "_border", LINE_HI) if on else LINE)
 
-    def _build(self, dnd_files):
-        pad = dict(padx=16)
-        head = tk.Frame(self.root, bg=BG)
-        head.pack(fill="x", pady=(12, 0), **pad)
-        tk.Label(head, text=f"▓▒░ {APP_NAME}", bg=BG, fg=FG, font=(MONO, 20, "bold")).pack(side="left")
-        self.cursor = tk.Label(head, text="▌", bg=BG, fg=FG, font=(MONO, 20, "bold"))
-        self.cursor.pack(side="left")
-        right = tk.Frame(head, bg=BG)
-        right.pack(side="right")
-        tk.Label(right, text=f"v{VERSION} · {APP_BY}", bg=BG, fg=MUTED, font=(MONO, 9), anchor="e").pack(fill="x")
-        tk.Label(right, textvariable=self.total_var, bg=BG, fg=FG, font=(MONO, 9, "bold"), anchor="e").pack(fill="x")
-        self._label(self.root, "analizá → limpiá lo que sobra → guardá en el HDD lo que no usás.").pack(fill="x", **pad)
+    def _label(self, parent, text=None, color=MUTED, size=9, bold=False, var=None, bg=BG):
+        return tk.Label(parent, text=text, textvariable=var, bg=bg, fg=color,
+                        font=font(size, bold), anchor="w", justify="left")
 
-        self.nb = ttk.Notebook(self.root, style="Vault.TNotebook")
-        self.nb.pack(fill="both", expand=True, pady=(8, 0), **pad)
-        self.tab_home, self.tab_detail, self.tab_map, self.tab_v, self.tab_auto, self.tab_log = (
-            tk.Frame(self.nb, bg=BG) for _ in range(6))
-        for tab, txt in ((self.tab_home, "INICIO"), (self.tab_detail, "DETALLE"), (self.tab_map, "MAPA"),
-                         (self.tab_v, "GUARDA MANUAL"), (self.tab_auto, "AUTO"), (self.tab_log, "LOG")):
-            self.nb.add(tab, text=txt)
-        self._build_home(self.tab_home)
-        self._build_detail(self.tab_detail)
-        self._build_map(self.tab_map)
-        self._build_vault(self.tab_v, dnd_files)
-        self._build_auto(self.tab_auto)
+    def _q(self, p, text, color=TEXT):
+        """La pregunta grande de cada paso."""
+        tk.Label(p, text=text, bg=BG, fg=color, font=font(18), wraplength=WRAP, justify="center").pack(pady=(0, 8))
+
+    def _q_num(self, p, before, num, after, color=ORANGE):
+        """Pregunta con un número grande resaltado en el medio."""
+        row = tk.Frame(p, bg=BG)
+        row.pack(pady=(0, 8))
+        for txt, col, f in ((before, TEXT, font(18)), (num, color, font(26, True)), (after, TEXT, font(18))):
+            if txt:
+                tk.Label(row, text=txt, bg=BG, fg=col, font=f).pack(side="left", anchor="s")
+
+    def _sub(self, p, text, color=MUTED, var=None):
+        tk.Label(p, text=text, textvariable=var, bg=BG, fg=color, font=font(10), wraplength=WRAP,
+                 justify="center").pack(pady=(0, 14))
+
+    def _primary(self, p, text, cmd, color=GREEN, enabled=True, enter=True):
+        """Botón principal del paso. enter=False para lo que borra o mueve: eso solo se hace con un clic."""
+        b = self._btn(p, text, cmd, color=color, big=True)
+        b.pack(pady=(18, 0))
+        if enabled and enter:
+            self._enter = cmd
+        else:
+            self._set_btn(b, False)
+        return b
+
+    def _link(self, p, text, cmd, color=MUTED, pack=True):
+        lbl = tk.Label(p, text=text, bg=BG, fg=color, font=(MONO, 10, "underline"), cursor="hand2")
+        lbl.bind("<Button-1>", lambda e: cmd())
+        lbl.bind("<Enter>", lambda e: lbl.configure(fg=TEXT))
+        lbl.bind("<Leave>", lambda e: lbl.configure(fg=color))
+        if pack:
+            lbl.pack(pady=(12, 0))
+        return lbl
+
+    def _pathbox(self, p, var, cmd, placeholder="sin elegir"):
+        txt = var.get() or placeholder
+        lbl = tk.Label(p, text=fit(txt, font(11), WRAP - 40), bg=PANEL, fg=TEXT if var.get() else MUTED,
+                       font=font(11), anchor="w", padx=14, pady=9, highlightthickness=1,
+                       highlightbackground=LINE_HI, cursor="hand2")
+        lbl.pack(fill="x", pady=(4, 0))
+        lbl.bind("<Button-1>", lambda e: cmd())
+        lbl.bind("<Enter>", lambda e: lbl.configure(highlightbackground=GREEN))
+        lbl.bind("<Leave>", lambda e: lbl.configure(highlightbackground=LINE_HI))
+        return lbl
+
+    def _row(self, p, on, title, size, color, cmd, note="", extra=None):
+        """Línea de una lista con casilla: un clic la prende o la apaga."""
+        tk.Frame(p, bg=LINE, height=1).pack(fill="x")
+        r = tk.Frame(p, bg=BG, cursor="hand2" if cmd else "")
+        r.pack(fill="x")
+        chk = tk.Label(r, text="■" if on else "□", bg=BG, fg=color if on else MUTED, font=font(12), width=2)
+        chk.pack(side="left", padx=(2, 6), pady=7)
+        t = tk.Label(r, text=title, bg=BG, fg=TEXT if on else MUTED, font=font(11), anchor="w")
+        t.pack(side="left")
+        ws = [r, chk, t]
+        if note:
+            n = tk.Label(r, text=note, bg=BG, fg=FAINT if not on else MUTED, font=font(9))
+            n.pack(side="left", padx=(8, 0))
+            ws.append(n)
+        if extra:
+            extra(r)
+        s = tk.Label(r, text=size, bg=BG, fg=color if on else MUTED, font=font(11, True))
+        s.pack(side="right", padx=(0, 4))
+        ws.append(s)
+        if cmd:
+            for w in ws:
+                w.bind("<Button-1>", lambda e: cmd())
+                w.bind("<Enter>", lambda e: [x.configure(bg=PANEL_HI) for x in ws])
+                w.bind("<Leave>", lambda e: [x.configure(bg=BG) for x in ws])
+        return r
+
+    # ── armado de la ventana
+    def _build(self):
+        self.headc = tk.Canvas(self.root, height=66, bg=BG, highlightthickness=0)
+        self.headc.pack(fill="x")
+        self.headc.bind("<Configure>", lambda e: self._draw_head())
+        self.headc.tag_bind("hdd", "<Button-1>", lambda e: self._pick_dest())
+        self.headc.tag_bind("hdd", "<Enter>", lambda e: self.headc.configure(cursor="hand2"))
+        self.headc.tag_bind("hdd", "<Leave>", lambda e: self.headc.configure(cursor=""))
+
+        nav = tk.Frame(self.root, bg=BG)
+        nav.pack(fill="x", padx=24)
+        tk.Frame(self.root, bg=LINE, height=1).pack(fill="x", padx=24)
+        foot = tk.Frame(self.root, bg=BG)
+        foot.pack(side="bottom", fill="x", padx=24, pady=(0, 10))
+        body = tk.Frame(self.root, bg=BG)
+        body.pack(fill="both", expand=True, padx=24)
+
+        self.tab_clean, self.tab_keep, self.tab_ex, self.tab_auto, self.tab_log = (
+            tk.Frame(body, bg=BG) for _ in range(5))
+        self.nb = HudTabs(nav, body, on_change=self._on_tab, size=11)
+        for tab, txt, tip in ((self.tab_clean, "limpiar", "Analizá y borrá lo que sobra.  [Ctrl+1]"),
+                              (self.tab_keep, "guardar en hdd", "Mandá al disco externo lo que no usás.  [Ctrl+2]"),
+                              (self.tab_ex, "explorar", "Mapa y listas completas, para mirar a fondo.  [Ctrl+3]"),
+                              (self.tab_auto, "auto", "Limpieza y guardado programados.  [Ctrl+4]")):
+            self.nb.add(tab, txt, tip)
+        self.nb.add_hidden(self.tab_log)
+        log_link = self._link(nav, "log", lambda: self.nb.select(self.tab_log), color=FAINT, pack=False)
+        log_link.pack(side="right", pady=(6, 0))
+
+        for key, tab in (("clean", self.tab_clean), ("keep", self.tab_keep), ("auto", self.tab_auto)):
+            self._stepview(tab, key)
+        self._build_explore(self.tab_ex)
         self._build_log(self.tab_log)
-        self.nb.bind("<<NotebookTabChanged>>", lambda e: self._refresh_auto()
-                     if self.nb.select() == str(self.tab_auto) else None)
 
-        self.bar = ttk.Progressbar(self.root, style="Vault.Horizontal.TProgressbar", maximum=1000)
-        self.bar.pack(fill="x", pady=(8, 2), **pad)
-        tk.Label(self.root, textvariable=self.status, bg=BG, fg=TEXT, font=(MONO, 9), anchor="w").pack(fill="x", **pad)
-        tk.Label(self.root, textvariable=self.stats_txt, bg=BG, fg=FG, font=(MONO, 9, "bold"), anchor="w").pack(fill="x", **pad)
-        self.last_lbl = tk.Label(self.root, textvariable=self.last_msg, bg=BG, fg=MUTED, font=(MONO, 9), anchor="w",
+        self.bar = HudProgress(foot)
+        self.bar.configure(height=4)
+        self.bar.pack(fill="x", pady=(0, 6))
+        self.last_lbl = tk.Label(foot, textvariable=self.last_msg, bg=BG, fg=MUTED, font=font(9), anchor="w",
                                  cursor="hand2")
-        self.last_lbl.pack(fill="x", pady=(0, 10), **pad)
+        self.last_lbl.pack(fill="x")
         self.last_lbl.bind("<Button-1>", lambda e: self.nb.select(self.tab_log))
 
+        for i, tab in enumerate((self.tab_clean, self.tab_keep, self.tab_ex, self.tab_auto), start=1):
+            self.root.bind(f"<Control-Key-{i}>", lambda e, t=tab: self.nb.select(t))
+            if IS_MAC:
+                self.root.bind(f"<Command-Key-{i}>", lambda e, t=tab: self.nb.select(t))
+        self.root.bind("<Return>", self._on_enter)
+        self.root.bind("<Escape>", lambda e: self._esc())
+        self.root.bind("<F5>", lambda e: None if self._is_busy else (self.nb.select(self.tab_clean), self._analyze()))
+
         self._write("ok", f"{APP_NAME} online. {RULE_TXT}.")
-        if not dnd_files:
-            self._write("info", "tip: instalá 'tkinterdnd2' (pip) para arrastrar y soltar carpetas.")
-        last = read_auto_log(40)
-        last = [ln for ln in last if ln and not ln.startswith(" ")]
+        last = [ln for ln in read_auto_log(40) if ln and not ln.startswith(" ")]
         if last:
             self._write("info", f"última corrida automática: {last[-1]}")
-        self._set_total(total_freed())
-        self._update_dest_txt()
+        self._freed_total = total_freed()
+        for key in self.view:
+            self._render(key)
 
-        self.run_buttons = [self.b_scan, self.b_run, self.b_an, self.b_send, self.b_del, self.b_msend, self.b_mdel,
-                            self.b_clean, self.b_keep]
-        self.cancel_buttons = [self.b_cancel, self.b_an_cancel]
+    def _on_tab(self, i):
+        f = self.nb.frame()
+        for key, tab in (("clean", self.tab_clean), ("keep", self.tab_keep), ("auto", self.tab_auto)):
+            if f is tab:
+                self._render(key)
+        if f not in (self.tab_clean, self.tab_keep, self.tab_auto):
+            self._enter = None
 
-    # ── pestaña INICIO
-    def _build_home(self, p):
-        pad = dict(padx=4)
-        row = tk.Frame(p, bg=BG)
-        row.pack(fill="x", pady=(10, 0), **pad)
-        self._label(row, "CARPETA", FG, bold=True).pack(side="left", padx=(0, 8))
-        tk.Label(row, textvariable=self.an_root, bg=PANEL, fg=TEXT, font=(MONO, 10), anchor="w",
-                 padx=8, pady=5).pack(side="left", fill="x", expand=True)
-        self._btn(row, "ELEGIR…", self._pick_an_root).pack(side="left", padx=(8, 0))
-        self.b_an = self._btn(row, "▶ ANALIZAR", self._analyze, accent=True)
-        self.b_an.pack(side="left", padx=(8, 0))
-        self.b_an_cancel = self._btn(row, "■", self._cancel)
-        self.b_an_cancel.pack(side="left", padx=(8, 0))
-        self.b_an_cancel.configure(state="disabled")
+    def _on_enter(self, e=None):
+        """Enter avanza un paso. Nunca borra ni mueve, e ignora toques seguidos (tecla apretada)."""
+        now = time.monotonic()
+        if not self._enter or self._is_busy or now - self._last_render < 0.4:
+            return
+        self._enter()
 
-        # tres números grandes
-        hero = tk.Frame(p, bg=BG)
-        hero.pack(fill="x", pady=(10, 0), **pad)
-        self.hero_lbl, self.hero_cap = {}, {}
-        for i, (key, color, cap) in enumerate((("clean", FG, "para limpiar"), ("keep", CYAN, "para guardar en el HDD"),
-                                               ("free", TEXT, "libres"))):
-            box = tk.Frame(hero, bg=PANEL, highlightthickness=1, highlightbackground=DIM)
-            box.grid(row=0, column=i, sticky="nsew", padx=(0 if i == 0 else 8, 0))
-            hero.columnconfigure(i, weight=1, uniform="hero")
-            self.hero_lbl[key] = tk.Label(box, text="—", bg=PANEL, fg=color, font=(MONO, 22, "bold"), anchor="w")
-            self.hero_lbl[key].pack(fill="x", padx=12, pady=(6, 0))
-            self.hero_cap[key] = tk.Label(box, text=cap, bg=PANEL, fg=MUTED, font=(MONO, 9), anchor="w")
-            self.hero_cap[key].pack(fill="x", padx=12, pady=(0, 8))
+    def _esc(self):
+        if self._is_busy and self.worker:
+            return self._cancel()
+        for key, tab in (("clean", self.tab_clean), ("keep", self.tab_keep), ("auto", self.tab_auto)):
+            if self.nb.frame() is tab and 0 < self.step[key] < STEPS[key]:
+                self._go(key, self.step[key] - 1)
 
-        # barra del disco
-        self.diskc = tk.Canvas(p, height=26, bg=BG, highlightthickness=0)
-        self.diskc.pack(fill="x", pady=(10, 2), **pad)
-        self.diskc.bind("<Configure>", lambda e: self._draw_disk())
-        leg = tk.Frame(p, bg=BG)
-        leg.pack(fill="x", **pad)
-        self.leg = {}
-        for key, color in (("used", DISK_USED), ("clean", FG), ("keep", CYAN), ("free", PANEL)):
-            tk.Label(leg, text="  ", bg=color, highlightthickness=1, highlightbackground=DIM).pack(side="left", padx=(0, 4))
-            self.leg[key] = tk.Label(leg, text="", bg=BG, fg=MUTED, font=(MONO, 8))
-            self.leg[key].pack(side="left", padx=(0, 14))
+    # ── cabecera: logo de prompt y contadores
+    def _draw_head(self):
+        c = self.headc
+        c.delete("all")
+        w, h = c.winfo_width(), c.winfo_height()
+        if w < 50:
+            return
+        f = font(20, True)
+        fm = tkfont.Font(font=f)
+        x, y = 24, h / 2
+        for txt, col in ((">", ORANGE), (" limpia", GREEN), ("&", ORANGE), ("guarda", GREEN)):
+            glow_text(c, x, y, txt, col, f, anchor="w")
+            x += fm.measure(txt)
+        lh = fm.metrics("linespace")
+        self._cursor_id = c.create_rectangle(x + 5, y - lh * 0.32, x + 16, y + lh * 0.34, fill=GREEN, outline="")
+        # a la derecha: liberado y HDD
+        rx = w - 24
+        tot = self._freed_total
+        vid = c.create_text(rx, y - 9, text=human(tot) if tot else "0 B", fill=ORANGE, font=font(12, True), anchor="e")
+        c.create_text(c.bbox(vid)[0] - 10, y - 9, text="liberado", fill=MUTED, font=font(9), anchor="e")
+        d = self.dest.get()
+        if not d:
+            txt, col = "○ sin elegir", MUTED
+        elif os.path.isdir(d):
+            txt, col = "● " + fit(d, font(9), 240), CYAN
+        else:
+            txt, col = "○ no conectado", ORANGE
+        hid = c.create_text(rx, y + 11, text=txt, fill=col, font=font(9), anchor="e", tags="hdd")
+        c.create_text(c.bbox(hid)[0] - 10, y + 11, text="hdd", fill=MUTED, font=font(9), anchor="e", tags="hdd")
 
-        # tarjetas (con scroll si no entran)
-        wrap = tk.Frame(p, bg=BG)
-        wrap.pack(fill="both", expand=True, pady=(10, 0), **pad)
-        self.cards_canvas = tk.Canvas(wrap, bg=BG, highlightthickness=0)
-        sb = ttk.Scrollbar(wrap, orient="vertical", command=self.cards_canvas.yview, style="Vault.Vertical.TScrollbar")
-        def autohide(first, last):  # la barra aparece solo si las tarjetas no entran
-            if float(first) <= 0 and float(last) >= 1:
-                sb.pack_forget()
+    def _blink(self):
+        cid = getattr(self, "_cursor_id", None)
+        if cid:
+            try:
+                cur = self.headc.itemcget(cid, "fill")
+                self.headc.itemconfigure(cid, fill=BG if cur == GREEN else GREEN)
+            except tk.TclError:
+                pass
+        self.root.after(530, self._blink)
+
+    def _set_total(self, tot):
+        self._freed_total = tot
+        self._draw_head()
+
+    def _update_dest_txt(self):
+        self._draw_head()
+
+    def _refresh_disk(self):
+        try:
+            u = shutil.disk_usage(self.an_root.get())
+            self.disk = (volume_of(self.an_root.get()), u.total, u.used, u.free)
+        except OSError:
+            self.disk = None
+
+    # ── asistentes por pasos
+    def _stepview(self, p, key):
+        top = tk.Frame(p, bg=BG)
+        top.pack(fill="x", pady=(18, 0))
+        dots = tk.Canvas(top, height=16, width=360, bg=BG, highlightthickness=0)
+        dots.pack(side="left")
+        bottom = tk.Frame(p, bg=BG)
+        bottom.pack(side="bottom", fill="x", pady=(0, 8))
+        back = self._link(bottom, "‹ volver", lambda: self._go(key, self.step[key] - 1), pack=False)
+        tk.Label(bottom, text="Enter = seguir · Esc = volver", bg=BG, fg=FAINT, font=font(8)).pack(side="right")
+        stage = tk.Frame(p, bg=BG)
+        stage.pack(fill="both", expand=True)
+        self.view[key] = dict(dots=dots, back=back, stage=stage, inner=None)
+
+    def _go(self, key, step):
+        self.step[key] = max(0, step)
+        if key == "keep" and step != 2:
+            self.show_opts = False
+        self._render(key)
+
+    def _render(self, key):
+        v = self.view[key]
+        if v["inner"] is not None:
+            v["inner"].destroy()
+        inner = tk.Frame(v["stage"], bg=BG)
+        inner.place(relx=0.5, rely=0.44, anchor="center", width=WRAP)
+        v["inner"] = inner
+        tab = {"clean": self.tab_clean, "keep": self.tab_keep, "auto": self.tab_auto}[key]
+        visible = self.nb.frame() is tab
+        self._last_render = time.monotonic()
+        prev, self._enter = self._enter, None
+        step = self.step[key]
+        getattr(self, f"_r_{key}")(inner, step)
+        if not visible:
+            self._enter = prev
+        # puntitos de avance
+        n = STEPS[key]
+        c = v["dots"]
+        c.delete("all")
+        if step < n:
+            for i in range(n):
+                col = GREEN if i == step else (mix(GREEN, BG, 0.55) if i < step else LINE_HI)
+                c.create_rectangle(i * 34, 7, i * 34 + 26, 10, fill=col, outline="")
+            c.create_text(n * 34 + 6, 8, text=f"paso {step + 1} de {n}", fill=MUTED, font=font(9), anchor="w")
+        else:
+            for i in range(n):
+                c.create_rectangle(i * 34, 7, i * 34 + 26, 10, fill=GREEN, outline="")
+        if 0 < step < n and not self._is_busy:
+            v["back"].pack(side="left")
+        else:
+            v["back"].pack_forget()
+
+    def _rerender(self):
+        for key in self.view:
+            self._render(key)
+
+    # ── LIMPIAR
+    def _clean_recs(self):
+        return [r for r in (self.report.recs if self.report else []) if r.action != "vault"]
+
+    def _clean_plan(self):
+        paths = []
+        for rec in self._clean_recs():
+            if self._card_on(rec):
+                paths += [i.path for i in self._card_items(rec)[0]]
+        return paths
+
+    def _r_clean(self, f, step):
+        if self.busy_kind == "analyze":
+            self._q(f, "Analizando…")
+            self._sub(f, "", var=self.status)
+            bar = HudProgress(f)
+            bar.pack(fill="x", padx=60, pady=(6, 0))
+            bar.configure(mode="indeterminate")
+            bar.start(12)
+            self._link(f, "cancelar", self._cancel)
+            return
+        if step == 0:
+            self._q(f, "¿Qué querés revisar?")
+            self._sub(f, "Tu usuario, una carpeta o un disco entero. Solo miro: no toco nada.")
+            box = self._pathbox(f, self.an_root, self._pick_an_root)
+            if self.dnd_files:
+                try:
+                    box.drop_target_register(self.dnd_files)
+                    box.dnd_bind("<<Drop>>", self._on_root_drop)
+                except Exception:  # noqa: BLE001
+                    pass
+            self._primary(f, "analizar", self._analyze)
+            links = tk.Frame(f, bg=BG)
+            links.pack()
+            self._link(links, "cambiar carpeta", self._pick_an_root, pack=False).pack(side="left", padx=10, pady=(12, 0))
+            if self.report and _norm(self.report.root) == _norm(self.an_root.get()):
+                self._link(links, "ver el último análisis ›", lambda: self._go("clean", 1), pack=False).pack(
+                    side="left", padx=10, pady=(12, 0))
+        elif step == 1:
+            recs = self._clean_recs()
+            if not recs:
+                self._q(f, "✔ No hay nada para limpiar", GREEN)
+                self._sub(f, "Todo en orden en " + self.an_root.get())
+                self._link(f, "volver a analizar", self._analyze)
+                return
+            total = self._totals()[0]
+            self._q_num(f, "Encontré ", human(total), " para borrar" if total else "", ORANGE if total else MUTED)
+            self._sub(f, "Ya viene elegido lo seguro. Tocá una línea para sacarla o sumarla.")
+            box = tk.Frame(f, bg=BG)
+            box.pack(fill="x")
+            for rec in sorted(recs, key=lambda r: r.safety != "seguro"):
+                items, skipped = self._card_items(rec)
+                note = "revisar" if rec.safety == "revisar" else (f"{skipped} en uso" if skipped else "")
+                self._row(box, self._card_on(rec), rec.title, human(sum(i.size for i in items)),
+                          SAFETY_COLOR[rec.safety], lambda k=rec.key: self._toggle_card(k), note,
+                          extra=lambda r, k=rec.key: self._link(r, "ver", lambda: self._show_detail(k),
+                                                                color=FAINT, pack=False).pack(side="right", padx=8))
+            tk.Frame(box, bg=LINE, height=1).pack(fill="x")
+            self._primary(f, "siguiente", lambda: self._go("clean", 2), enabled=bool(total))
+            self._link(f, "volver a analizar", self._analyze)
+        elif step == 2:
+            paths = self._clean_plan()
+            size = self._totals()[0]
+            self._q(f, f"¿Borro {human(size)} para siempre?")
+            self._sub(f, "No pasa por la papelera, así el espacio se libera de verdad. Queda anotado en un log.")
+            on = [r.title for r in self._clean_recs() if self._card_on(r)]
+            self._sub(f, " · ".join(on), color=FAINT)
+            for w in self._delete_warnings(paths):
+                tk.Label(f, text=w, bg=BG, fg=ORANGE, font=font(10), wraplength=WRAP).pack(pady=(0, 4))
+            self._primary(f, "sí, limpiar", lambda: self._delete_flow(paths, confirm=False, origin="clean"),
+                          color=GREEN, enter=False)
+        else:
+            if self.busy_kind == "delete":
+                self._q(f, "Limpiando…")
+                self._sub(f, "", var=self.status)
+                return
+            res = self.result.get("clean") or {}
+            self._q_num(f, "✔ Liberaste ", human(res.get("freed", 0)), "", GREEN)
+            if self.disk:
+                self._sub(f, f"Libre en {volume_label(self.disk[0])}: {human(self.disk[3])}")
+            if res.get("errors"):
+                self._sub(f, f"{res['errors']} cosas no se pudieron borrar (en uso o sin permiso). Mirá el log.",
+                          color=ORANGE)
+            self._link(f, "empezar de nuevo", lambda: self._go("clean", 0))
+
+    # ── GUARDAR EN EL HDD
+    def _keep_sugg(self):
+        return [r for r in (self.report.recs if self.report else []) if r.action == "vault"]
+
+    def _keep_plan(self):
+        sugg = []
+        for rec in self._keep_sugg():
+            if self._card_on(rec):
+                sugg += [i for i in rec.items if os.path.exists(i.path)]
+        manual = [s for s in self.sources if os.path.exists(s)]
+        return sugg, manual
+
+    def _r_keep(self, f, step):
+        dest = self.dest.get()
+        if step == 0:
+            self._q(f, "¿Dónde está tu disco externo?")
+            self._sub(f, "El HDD, o una carpeta adentro (" + ("/Volumes/HDD/Guardado" if IS_MAC else "E:\\Guardado")
+                      + "). Lo recuerdo para la próxima.")
+            self._pathbox(f, self.dest, self._pick_dest)
+            if dest and os.path.isdir(dest):
+                self._primary(f, "usar este", lambda: self._go("keep", 1), color=CYAN)
+                self._link(f, "elegir otro", self._pick_dest)
             else:
-                sb.pack(side="left", fill="y")
-            sb.set(first, last)
-        self.cards_canvas.configure(yscrollcommand=autohide)
-        self.cards_canvas.pack(side="left", fill="both", expand=True)
-        self.cards_box = tk.Frame(self.cards_canvas, bg=BG)
-        win = self.cards_canvas.create_window((0, 0), window=self.cards_box, anchor="nw")
-        self.cards_box.bind("<Configure>", lambda e: self.cards_canvas.configure(
-            scrollregion=self.cards_canvas.bbox("all")))
-        self.cards_canvas.bind("<Configure>", lambda e: self.cards_canvas.itemconfigure(win, width=e.width))
-        def wheel(e):  # solo si el mouse está sobre las tarjetas
-            w = self.root.winfo_containing(e.x_root, e.y_root)
-            if w is not None and str(w).startswith(str(self.cards_canvas)):
-                step = -e.delta if IS_MAC else int(-e.delta / 120)  # en Mac delta viene en pasos chicos
-                self.cards_canvas.yview_scroll(step, "units")
-        self.root.bind_all("<MouseWheel>", wheel, add="+")
+                if dest:
+                    self._sub(f, "No está conectado.", color=ORANGE)
+                self._primary(f, "elegir disco", lambda: self._pick_dest(then=1), color=CYAN)
+        elif step == 1:
+            self._q(f, "¿Qué mando al HDD?")
+            sugg = self._keep_sugg()
+            self._sub(f, "Sugerencias del análisis y lo que sumes a mano." if sugg else
+                      "Sumá carpetas o archivos" + (" (o arrastralos acá)." if self.dnd_files else "."))
+            box = tk.Frame(f, bg=BG)
+            box.pack(fill="x")
+            for rec in sugg:
+                self._row(box, self._card_on(rec), rec.title, human(rec.size), CYAN,
+                          lambda k=rec.key: self._toggle_card(k))
+            for s in self.sources:
+                self._row(box, True, fit(s, font(11), WRAP - 120), "a mano", CYAN, None,
+                          extra=lambda r, s=s: self._link(r, "quitar", lambda: self._remove_source(s), color=FAINT,
+                                                          pack=False).pack(side="right", padx=8))
+            if sugg or self.sources:
+                tk.Frame(box, bg=LINE, height=1).pack(fill="x")
+            if self.dnd_files:
+                for w in (f, box):
+                    try:
+                        w.drop_target_register(self.dnd_files)
+                        w.dnd_bind("<<Drop>>", self._on_drop)
+                    except Exception:  # noqa: BLE001
+                        pass
+            links = tk.Frame(f, bg=BG)
+            links.pack()
+            self._link(links, "+ carpeta", self._add_dir, color=CYAN, pack=False).pack(side="left", padx=10, pady=(10, 0))
+            self._link(links, "+ archivos", self._add_files, color=CYAN, pack=False).pack(side="left", padx=10, pady=(10, 0))
+            if not self.report:
+                self._link(links, "analizar para recibir sugerencias ›",
+                           lambda: self.nb.select(self.tab_clean), pack=False).pack(side="left", padx=10, pady=(10, 0))
+            s_items, manual = self._keep_plan()
+            self._primary(f, "siguiente", lambda: self._go("keep", 2), color=CYAN, enabled=bool(s_items or manual))
+        elif step == 2:
+            s_items, manual = self._keep_plan()
+            size = sum(i.size for i in s_items)
+            move = self.mode.get() == MODE_MOVE
+            verb = "Muevo" if move else "Copio"
+            if s_items and manual:
+                self._q_num(f, f"¿{verb} ", human(size), " + lo elegido a mano al HDD?", CYAN)
+            elif s_items:
+                self._q_num(f, f"¿{verb} ", human(size), " al HDD?", CYAN)
+            else:
+                self._q(f, f"¿{verb} {len(manual)} elemento{'s' if len(manual) != 1 else ''} al HDD?")
+            self._sub(f, "Copio, verifico con SHA-256 y recién ahí borro el original." if move
+                      else "Copio y verifico con SHA-256. No borro nada.")
+            sources = [i.path for i in s_items] + manual
+            errors, warnings = preflight(sources, dest, self.mode.get())
+            for e in errors:
+                tk.Label(f, text=e, bg=BG, fg=RED, font=font(10), wraplength=WRAP).pack(pady=(0, 4))
+            for w in warnings:
+                tk.Label(f, text=w, bg=BG, fg=ORANGE, font=font(9), wraplength=WRAP).pack(pady=(0, 4))
+            days = self._age_days()
+            if days and not s_items:
+                self._sub(f, f"Solo archivos sin modificar hace más de {days} días.", color=FAINT)
+            self._primary(f, "mover y verificar" if move else "copiar y verificar",
+                          lambda: self._do_keep(s_items, manual), color=CYAN, enabled=not errors, enter=False)
+            self._link(f, "opciones ▴" if self.show_opts else "opciones ▾", self._toggle_opts)
+            if self.show_opts:
+                o = tk.Frame(f, bg=BG)
+                o.pack(pady=(12, 0))
+                HudChoice(o, self.mode, [(MODE_MOVE, "mover · libera espacio"),
+                                         (MODE_BACKUP, "solo copiar")], color=CYAN).pack(pady=(0, 8))
+                if not s_items:  # lo sugerido ya viene filtrado y los proyectos viajan enteros
+                    HudChoice(o, self.age, [(a, a) for a, _ in AGE_OPTIONS], color=CYAN).pack(pady=(0, 8))
+                HudCheck(o, "guardar con la ruta completa", self.full_path, color=CYAN).pack()
+        else:
+            if self.busy_kind == "vault":
+                self._q(f, "Guardando en el HDD…")
+                self._sub(f, "", var=self.stats_txt, color=TEXT)
+                self._sub(f, "", var=self.status)
+                self._link(f, "cancelar", self._cancel)
+                return
+            st = self.result.get("keep") or {}
+            if st.get("aborted"):
+                self._q(f, "No entra en el HDD", ORANGE)
+                self._sub(f, "No copié nada. Mirá el log para ver cuánto falta.")
+            else:
+                n = st.get("copied", 0) + st.get("already", 0)
+                self._q_num(f, "✔ ", f"{n} archivo{'s' if n != 1 else ''}", " a salvo en el HDD", GREEN)
+                if st.get("freed"):
+                    self._sub(f, f"Liberaste {human(st['freed'])} en la PC.")
+                bad = st.get("errors", 0) + st.get("skipped", 0)
+                if bad or st.get("cancelled"):
+                    self._sub(f, ("Cancelado. " if st.get("cancelled") else "") +
+                              (f"{bad} quedaron en la PC (errores o salteados). Mirá el log." if bad else ""),
+                              color=ORANGE)
+                if st.get("log_path"):
+                    self._sub(f, f"Recibo: {st['log_path']}", color=FAINT)
+            self._link(f, "empezar de nuevo", lambda: self._go("keep", 0))
 
-        # acciones
-        arow = tk.Frame(p, bg=BG)
-        arow.pack(fill="x", pady=(10, 0), **pad)
-        self.b_clean = self._btn(arow, "✖ LIMPIAR", self._clean, color=FG, big=True)
-        self.b_clean.pack(side="left")
-        self.b_keep = self._btn(arow, "→ GUARDAR EN EL HDD", self._keep, color=CYAN, big=True)
-        self.b_keep.pack(side="left", padx=(10, 0))
-        drow = tk.Frame(arow, bg=BG)
-        drow.pack(side="right")
-        self._label(drow, var=self.dest_txt, color=TEXT).pack(side="left")
-        self._btn(drow, "CAMBIAR", self._pick_dest).pack(side="left", padx=(8, 0))
-        rule = self._label(p, RULE_TXT, size=8)
-        rule.configure(wraplength=940)
-        rule.pack(fill="x", pady=(6, 4), **pad)
+    def _toggle_opts(self):
+        self.show_opts = not self.show_opts
+        self._render("keep")
 
-    # ── pestaña DETALLE
-    def _build_detail(self, p):
-        pad = dict(padx=4)
-        self._label(p, color=TEXT, var=self.an_summary).pack(fill="x", pady=(10, 4), **pad)
-        self.anb = ttk.Notebook(p, style="Sub.TNotebook")
-        self.anb.pack(fill="both", expand=True, **pad)
-        f1, f2, f3 = (tk.Frame(self.anb, bg=BG) for _ in range(3))
-        self.anb.add(f1, text="RECOMENDADO")
-        self.anb.add(f2, text="ARCHIVOS PESADOS")
-        self.anb.add(f3, text="CARPETAS")
-        self.t_rec = self._tree(f1, [("size", "tamaño", 100, "e"), ("count", "ítems", 70, "e")],
-                                "tree headings", "categoría / ruta")
-        self.t_files = self._tree(f2, [("size", "tamaño", 100, "e"), ("age", "sin tocar", 100, "e"),
-                                       ("path", "ruta", 600, "w")], "headings")
-        self.t_dirs = self._tree(f3, [("size", "tamaño", 110, "e"), ("pct", "%", 60, "e")],
-                                 "tree headings", "carpeta")
-        self.trees = [self.t_rec, self.t_files, self.t_dirs]
-        tk.Label(p, textvariable=self.an_hint, bg=BG, fg=MUTED, font=(MONO, 9), anchor="w", justify="left",
-                 wraplength=900).pack(fill="x", pady=(6, 0), **pad)
+    def _do_keep(self, s_items, manual):
+        if s_items:
+            self.full_path.set(True)
+            if self._age_days():
+                self.age.set(AGE_OPTIONS[0][0])
+                self._write("info", "filtro puesto en 'todo': lo sugerido ya está filtrado por antigüedad y los "
+                                    "proyectos tienen que viajar enteros.")
+        self._saved_sources = list(self.sources)
+        self.sources = [i.path for i in s_items] + [m for m in manual if m not in {i.path for i in s_items}]
+        if not self._run(confirm=False):
+            self.sources, self._saved_sources = self._saved_sources, None
+
+    # ── EXPLORAR
+    def _build_explore(self, p):
+        top = tk.Frame(p, bg=BG)
+        top.pack(fill="x", pady=(18, 10))
+        HudChoice(top, self.ex_view, [("mapa", "mapa"), ("rec", "recomendado"), ("files", "archivos pesados"),
+                                      ("dirs", "carpetas")]).pack(side="left")
+        self.ex_summary = tk.Label(top, text="", bg=BG, fg=MUTED, font=font(9), anchor="e")
+        self.ex_summary.pack(side="right")
         arow = tk.Frame(p, bg=BG)
-        arow.pack(fill="x", pady=(6, 4), **pad)
-        self.b_send = self._btn(arow, "→ GUARDA MANUAL", lambda: self._send_paths(self._selected_paths()))
+        arow.pack(side="bottom", fill="x", pady=(8, 8))
+        self.b_send = self._btn(arow, "guardar en hdd", lambda: self._send_paths(self._ex_paths()),
+                                tip="Suma la selección a GUARDAR EN HDD.")
         self.b_send.pack(side="left")
-        self.b_del = self._btn(arow, "✖ BORRAR SELECCIÓN", lambda: self._delete_flow(self._selected_paths()),
-                               danger=True)
+        self.b_del = self._btn(arow, "borrar", lambda: self._delete_flow(self._ex_paths()), danger=True,
+                               tip="Borra para siempre lo seleccionado. Pide confirmación y deja log.")
         self.b_del.pack(side="left", padx=8)
-        self._btn(arow, "ABRIR UBICACIÓN", lambda: self._open_paths(self._selected_paths())).pack(side="left")
-        self._label(arow, "Ctrl/Shift = varias").pack(side="right")
-        self.anb.bind("<<NotebookTabChanged>>", lambda e: self.an_hint.set(
-            "seleccioná algo para ver por qué está recomendado." if self.report else ""))
+        self._btn(arow, "abrir ubicación", lambda: self._open_paths(self._ex_paths())).pack(side="left")
+        self.ex_hint = tk.Label(p, text="", bg=BG, fg=MUTED, font=font(9), anchor="w", justify="left")
+        self.ex_hint.pack(side="bottom", fill="x", pady=(6, 0))
+        body = tk.Frame(p, bg=BG)
+        body.pack(fill="both", expand=True)
+        self.ex_frames = {k: tk.Frame(body, bg=BG) for k in ("mapa", "rec", "files", "dirs")}
+        self.map = TreeMapView(self, self.ex_frames["mapa"])
+        self.t_rec = self._tree(self.ex_frames["rec"], [("size", "tamaño", 100, "e"), ("count", "ítems", 70, "e")],
+                                "tree headings", "categoría / ruta")
+        self.t_files = self._tree(self.ex_frames["files"], [("size", "tamaño", 100, "e"),
+                                                            ("age", "sin tocar", 100, "e"),
+                                                            ("path", "ruta", 600, "w")], "headings")
+        self.t_dirs = self._tree(self.ex_frames["dirs"], [("size", "tamaño", 110, "e"), ("pct", "%", 60, "e")],
+                                 "tree headings", "carpeta")
+        self.trees = {"rec": self.t_rec, "files": self.t_files, "dirs": self.t_dirs}
+        self.ex_view.trace_add("write", lambda *a: self._show_ex())
+        self.map_hint.trace_add("write", lambda *a: self.ex_view.get() == "mapa"
+                                and self.ex_hint.configure(text=self.map_hint.get()))
+        self.an_hint.trace_add("write", lambda *a: self.ex_view.get() != "mapa"
+                               and self.ex_hint.configure(text=self.an_hint.get()))
+        self._show_ex()
 
-    # ── pestaña MAPA
-    def _build_map(self, p):
-        pad = dict(padx=4)
-        inner = tk.Frame(p, bg=BG)
-        inner.pack(fill="both", expand=True, pady=(6, 0), **pad)
-        self.map = TreeMapView(self, inner)
-        tk.Label(p, textvariable=self.map_hint, bg=BG, fg=MUTED, font=(MONO, 9), anchor="w", justify="left",
-                 wraplength=900).pack(fill="x", pady=(6, 0), **pad)
-        arow = tk.Frame(p, bg=BG)
-        arow.pack(fill="x", pady=(6, 4), **pad)
-        self.b_msend = self._btn(arow, "→ GUARDA MANUAL", lambda: self._send_paths(self._map_paths()))
-        self.b_msend.pack(side="left")
-        self.b_mdel = self._btn(arow, "✖ BORRAR", lambda: self._delete_flow(self._map_paths()), danger=True)
-        self.b_mdel.pack(side="left", padx=8)
-        self._btn(arow, "ABRIR UBICACIÓN", lambda: self._open_paths(self._map_paths())).pack(side="left")
+    def _show_ex(self):
+        v = self.ex_view.get()
+        for k, fr in self.ex_frames.items():
+            if k == v:
+                fr.pack(fill="both", expand=True)
+            else:
+                fr.pack_forget()
+        if not self.report:
+            self.ex_hint.configure(text="Todavía no hay análisis: arrancá en LIMPIAR (o apretá F5).")
+        elif v == "mapa":
+            self.ex_hint.configure(text=self.map_hint.get())
+        else:
+            self.ex_hint.configure(text="seleccioná algo (Ctrl o Shift para varias) · doble clic abre la ubicación")
 
-    # ── pestaña LOG
-    def _build_log(self, p):
-        fr = tk.Frame(p, bg=BG)
-        fr.pack(fill="both", expand=True, pady=(8, 6), padx=4)
-        self.log = tk.Text(fr, bg="#050805", fg=FG, font=(MONO, 9), relief="flat", wrap="word",
-                           highlightthickness=1, highlightbackground=DIM, insertbackground=FG,
-                           padx=8, pady=6, state="disabled")
-        sb = ttk.Scrollbar(fr, command=self.log.yview, style="Vault.Vertical.TScrollbar")
-        self.log.configure(yscrollcommand=sb.set)
-        self.log.pack(side="left", fill="both", expand=True)
-        sb.pack(side="left", fill="y")
-        for tag, color in (("info", MUTED), ("ok", FG), ("warn", WARN), ("err", ERR)):
-            self.log.tag_configure(tag, foreground=color)
+    def _ex_paths(self):
+        if self.ex_view.get() == "mapa":
+            return self._map_paths()
+        return self._selected_paths(self.trees[self.ex_view.get()])
+
+    def _show_detail(self, key):
+        self.nb.select(self.tab_ex)
+        self.ex_view.set("rec")
+        iid = f"r:{key}"
+        if self.t_rec.exists(iid):
+            self.t_rec.item(iid, open=True)
+            self.t_rec.selection_set(iid)
+            self.t_rec.see(iid)
 
     def _tree(self, parent, cols, show, tree_head=None):
-        fr = tk.Frame(parent, bg=BG)
+        fr = tk.Frame(parent, bg=PANEL, highlightthickness=1, highlightbackground=LINE)
         fr.pack(fill="both", expand=True)
         t = ttk.Treeview(fr, columns=[c[0] for c in cols], show=show, style="Vault.Treeview", selectmode="extended")
         if "tree" in show:
@@ -2147,173 +2789,84 @@ class App:
         t.configure(yscrollcommand=sb.set)
         t.pack(side="left", fill="both", expand=True)
         sb.pack(side="left", fill="y")
-        for tag, color in (("seguro", FG), ("revisar", WARN), ("vault", CYAN), ("muted", MUTED), ("item", TEXT)):
+        for tag, color in (("seguro", GREEN), ("revisar", ORANGE), ("vault", CYAN), ("muted", MUTED), ("item", TEXT)):
             t.tag_configure(tag, foreground=color)
         t.bind("<<TreeviewSelect>>", self._on_select)
-        t.bind("<Double-1>", lambda e: self._open_paths(self._selected_paths()))
+        t.bind("<Double-1>", lambda e, t=t: self._open_paths(self._selected_paths(t)))
         return t
 
-    # ── pestaña GUARDA MANUAL
-    def _build_vault(self, p, dnd_files):
-        pad = dict(padx=4)
-        self._label(p, "DESTINO (tu HDD externo)", FG, bold=True).pack(fill="x", pady=(10, 2), **pad)
-        drow = tk.Frame(p, bg=BG)
-        drow.pack(fill="x", **pad)
-        tk.Label(drow, textvariable=self.dest, bg=PANEL, fg=TEXT, font=(MONO, 10), anchor="w",
-                 padx=8, pady=5).pack(side="left", fill="x", expand=True)
-        self._btn(drow, "ELEGIR…", self._pick_dest).pack(side="left", padx=(8, 0))
-        self._btn(drow, "LOGS", self._open_logs).pack(side="left", padx=(8, 0))
-
-        hint = "ORIGEN (arrastrá carpetas acá)" if dnd_files else "ORIGEN"
-        self._label(p, hint, FG, bold=True).pack(fill="x", pady=(12, 2), **pad)
-        srow = tk.Frame(p, bg=BG)
-        srow.pack(fill="both", expand=True, **pad)
-        self.listbox = tk.Listbox(srow, height=8, bg=PANEL, fg=TEXT, font=(MONO, 10),
-                                  selectbackground=DIM, selectforeground=TEXT, relief="flat",
-                                  highlightthickness=1, highlightbackground=DIM, activestyle="none",
-                                  selectmode="extended")
-        self.listbox.pack(side="left", fill="both", expand=True)
-        col = tk.Frame(srow, bg=BG)
-        col.pack(side="left", padx=(8, 0), fill="y")
-        for txt, cmd in (("+ CARPETA", self._add_dir), ("+ ARCHIVOS", self._add_files),
-                         ("QUITAR", self._remove_sel), ("VACIAR LISTA", self._clear)):
-            self._btn(col, txt, cmd).pack(fill="x", pady=(0, 4))
-        if dnd_files:
-            self.listbox.drop_target_register(dnd_files)
-            self.listbox.dnd_bind("<<Drop>>", self._on_drop)
-
-        frow = tk.Frame(p, bg=BG)
-        frow.pack(fill="x", pady=(12, 0), **pad)
-        self._label(frow, "FILTRO: solo archivos sin modificar hace", TEXT, 10).pack(side="left")
-        ttk.Combobox(frow, textvariable=self.age, values=[a for a, _ in AGE_OPTIONS], state="readonly",
-                     width=10, style="Vault.TCombobox", font=(MONO, 10)).pack(side="left", padx=8)
-        tk.Checkbutton(frow, text="guardar con ruta completa (" + ("/Users/…" if IS_MAC else "C\\Users\\…") + ")", variable=self.full_path, bg=BG, fg=TEXT,
-                       selectcolor=PANEL, activebackground=BG, activeforeground=FG, font=(MONO, 10),
-                       highlightthickness=0, cursor="hand2").pack(side="left", padx=(12, 0))
-
-        mrow = tk.Frame(p, bg=BG)
-        mrow.pack(fill="x", pady=(8, 0), **pad)
-        for val, txt in ((MODE_MOVE, "MOVER AL HDD (libera espacio)"), (MODE_BACKUP, "SOLO COPIA (no borra nada)")):
-            tk.Radiobutton(mrow, text=txt, value=val, variable=self.mode, bg=BG, fg=TEXT,
-                           selectcolor=PANEL, activebackground=BG, activeforeground=FG,
-                           font=(MONO, 10), highlightthickness=0, cursor="hand2").pack(side="left", padx=(0, 18))
-
-        arow = tk.Frame(p, bg=BG)
-        arow.pack(fill="x", pady=(12, 6), **pad)
-        self.b_scan = self._btn(arow, "ESCANEAR", self._scan)
-        self.b_scan.pack(side="left")
-        self.b_run = self._btn(arow, "▶ EJECUTAR", self._run, accent=True)
-        self.b_run.pack(side="left", padx=8)
-        self.b_cancel = self._btn(arow, "■ CANCELAR", self._cancel)
-        self.b_cancel.pack(side="left")
-        self.b_cancel.configure(state="disabled")
-
-    # ── pestaña AUTO (Programador de tareas)
-    def _build_auto(self, p):
-        pad = dict(padx=4)
-        self._label(p, "TAREAS PROGRAMADAS", FG, bold=True).pack(fill="x", pady=(10, 2), **pad)
-        self._label(p, f"Corren solas con {SCHEDULER}, aunque la app esté cerrada. "
-                       "Usan la CARPETA de INICIO y el HDD que tengas elegidos al programar. "
-                       + ("Si la Mac estaba dormida a esa hora, corren apenas se despierta (apagada, no)."
-                          if IS_MAC else "Si la PC estaba apagada a esa hora, corren apenas se prende.")).pack(fill="x", **pad)
+    # ── AUTO
+    def _r_auto(self, f, step):
         if not (IS_WIN or IS_MAC):
-            self._label(p, "Solo disponible en Windows y Mac.", WARN).pack(fill="x", pady=8, **pad)
+            self._q(f, "Las tareas programadas andan solo en Windows y Mac.", MUTED)
             return
         saved = self.cfg.get("auto", {})
-        extra = {"limpieza": "En automático NUNCA vacía la papelera (es tu red de seguridad), y las caches "
-                             f"usadas en los últimos {CACHE_QUIET_DAYS} días se saltean (por si VS Code o un "
-                             "proyecto está abierto).",
-                 "sesiones": "Si el HDD no está conectado a esa hora, no hace nada. Si algo da un aviso "
-                             "(OneDrive, mismo disco), ese elemento se saltea."}
-        for key, pr in PRESETS.items():
-            box = tk.Frame(p, bg=PANEL, highlightthickness=1, highlightbackground=DIM)
-            box.pack(fill="x", pady=(10, 0), **pad)
-            tk.Label(box, text=pr["title"].upper(), bg=PANEL, fg=FG, font=(MONO, 10, "bold"),
-                     anchor="w").pack(fill="x", padx=10, pady=(8, 0))
-            tk.Label(box, text=pr["desc"] + " " + extra[key], bg=PANEL, fg=MUTED, font=(MONO, 9),
-                     anchor="w", justify="left", wraplength=860).pack(fill="x", padx=10)
-            row = tk.Frame(box, bg=PANEL)
-            row.pack(fill="x", padx=10, pady=(6, 4))
-            when0, hour0 = AUTO_DEFAULTS[key]
-            when = tk.StringVar(value=saved.get(key, {}).get("when", when0))
-            hour = tk.StringVar(value=saved.get(key, {}).get("hour", hour0))
+        if step == 0:
+            self._q(f, "¿Qué querés que haga solo?")
+            self._sub(f, f"Corre con {SCHEDULER}, aunque la app esté cerrada.")
+            box = tk.Frame(f, bg=BG)
+            box.pack(fill="x")
+            for key, pr in PRESETS.items():
+                info = saved.get(key)
+                on = task_exists(key)
+                note = (f"● {info['when']} a las {info['hour']}" if on and info else
+                        "● programado" if on else "○ no programado")
+                self._row(box, on, pr["title"].lower(), note, AUTO_COLOR[key],
+                          lambda k=key: (setattr(self, "auto_sel", k), self._go("auto", 1)))
+            tk.Frame(box, bg=LINE, height=1).pack(fill="x")
+            self._link(f, "últimas corridas ›", lambda: self._go("auto", 3))
+        elif step == 1:
+            key = self.auto_sel
+            pr, color = PRESETS[key], AUTO_COLOR[key]
+            self._q(f, f"{pr['title'].lower()}: ¿cuándo?")
+            row = tk.Frame(f, bg=BG)
+            row.pack(pady=(4, 14))
+            when, hour = self.auto_vars[key]
             ttk.Combobox(row, textvariable=when, values=[w for w, _ in WHEN_OPTIONS], state="readonly",
-                         width=20, style="Vault.TCombobox", font=(MONO, 10)).pack(side="left")
-            tk.Label(row, text="a las", bg=PANEL, fg=TEXT, font=(MONO, 10)).pack(side="left", padx=6)
+                         width=20, style="Vault.TCombobox", font=font(11)).pack(side="left")
+            tk.Label(row, text="a las", bg=BG, fg=TEXT, font=font(11)).pack(side="left", padx=8)
             ttk.Combobox(row, textvariable=hour, values=HOURS, state="readonly", width=6,
-                         style="Vault.TCombobox", font=(MONO, 10)).pack(side="left")
-            b_on = self._btn(row, "PROGRAMAR", lambda k=key: self._schedule(k), accent=True)
-            b_on.pack(side="left", padx=(12, 0))
-            b_off = self._btn(row, "QUITAR", lambda k=key: self._unschedule(k))
-            b_off.pack(side="left", padx=(8, 0))
-            b_now = self._btn(row, "PROBAR AHORA", lambda k=key: self._run_task_now(k))
-            b_now.pack(side="left", padx=(8, 0))
-            status = tk.StringVar(value="")
-            tk.Label(box, textvariable=status, bg=PANEL, fg=TEXT, font=(MONO, 9), anchor="w",
-                     justify="left", wraplength=860).pack(fill="x", padx=10, pady=(0, 8))
-            self.auto_ui[key] = dict(when=when, hour=hour, status=status, on=b_on, off=b_off, now=b_now)
-
-        hrow = tk.Frame(p, bg=BG)
-        hrow.pack(fill="x", pady=(12, 2), **pad)
-        self._label(hrow, "ÚLTIMAS CORRIDAS", FG, bold=True).pack(side="left")
-        self._btn(hrow, "ACTUALIZAR", self._refresh_auto).pack(side="right")
-        self._btn(hrow, "LOGS", lambda: open_folder(str(DELETE_LOG_DIR)) if DELETE_LOG_DIR.is_dir()
-                  else messagebox.showinfo(APP_NAME, "Todavía no hay logs.")).pack(side="right", padx=8)
-        self.auto_log = tk.Text(p, height=8, bg="#050805", fg=TEXT, font=(MONO, 9), relief="flat", wrap="word",
-                                highlightthickness=1, highlightbackground=DIM, padx=8, pady=6, state="disabled")
-        self.auto_log.pack(fill="both", expand=True, pady=(0, 6), **pad)
-
-    def _refresh_auto(self):
-        if not self.auto_ui:
-            return
-        saved = self.cfg.get("auto", {})
-        for key, ui in self.auto_ui.items():
-            info = saved.get(key)
+                         style="Vault.TCombobox", font=font(11)).pack(side="left")
+            self._sub(f, f"Analiza {self.an_root.get()}" + (f" → {self.dest.get() or 'HDD sin elegir'}"
+                                                             if pr["action"] == "vault" else ""), color=TEXT)
+            self._sub(f, pr["desc"].replace("[SEGURO]", "seguro") + " " + AUTO_EXTRA[key])
+            self._primary(f, "programar", lambda: self._schedule(key), color=color)
             if task_exists(key):
-                txt = "● PROGRAMADO"
-                if info:
-                    txt += f" · {info['when']} a las {info['hour']} · analiza {info['root']}"
-                    if PRESETS[key]["action"] == "vault":
-                        txt += f" → {info.get('dest') or '?'}"
-                ui["status"].set(txt)
-                ui["off"].configure(state="normal")
-                ui["now"].configure(state="normal")
-            else:
-                ui["status"].set("○ no programado" + (f" (se borró desde {OS_NAME})" if info else ""))
-                ui["off"].configure(state="disabled")
-                ui["now"].configure(state="disabled")
-        self.auto_log.configure(state="normal")
-        self.auto_log.delete("1.0", "end")
-        self.auto_log.insert("end", "\n".join(read_auto_log()) or "todavía no corrió ninguna tarea programada.")
-        self.auto_log.see("end")
-        self.auto_log.configure(state="disabled")
+                links = tk.Frame(f, bg=BG)
+                links.pack()
+                self._link(links, "quitar", lambda: self._unschedule(key), pack=False).pack(side="left", padx=10, pady=(12, 0))
+                self._link(links, "probar ahora", lambda: self._run_task_now(key), pack=False).pack(
+                    side="left", padx=10, pady=(12, 0))
+        elif step == 2:
+            key = self.auto_sel
+            info = saved.get(key, {})
+            self._q(f, "✔ Programado", GREEN)
+            self._sub(f, f"{PRESETS[key]['title']} · {info.get('when', '')} a las {info.get('hour', '')}", color=TEXT)
+            self._sub(f, AUTO_EXTRA[key])
+            self._link(f, "listo", lambda: self._go("auto", 0))
+        else:
+            self._q(f, "Últimas corridas")
+            txt = tk.Text(f, height=12, bg=PANEL, fg=TEXT, font=font(9), relief="flat", wrap="word",
+                          highlightthickness=1, highlightbackground=LINE, padx=10, pady=8)
+            txt.pack(fill="x")
+            txt.insert("end", "\n".join(read_auto_log()) or "todavía no corrió ninguna tarea programada.")
+            txt.see("end")
+            txt.configure(state="disabled")
+            self._link(f, "‹ volver", lambda: self._go("auto", 0))
 
     def _schedule(self, key):
-        ui, pr = self.auto_ui[key], PRESETS[key]
+        pr = PRESETS[key]
         root = self.an_root.get()
         dest = self.dest.get() if pr["action"] == "vault" else ""
         if not os.path.isdir(root):
             return messagebox.showerror(APP_NAME, f"La carpeta a analizar no existe:\n{root}")
         if pr["action"] == "vault":
             if not dest:
-                return messagebox.showerror(APP_NAME, "Elegí primero el HDD (botón CAMBIAR en INICIO).")
+                return messagebox.showerror(APP_NAME, "Elegí primero el HDD (en GUARDAR EN HDD, o arriba a la derecha).")
             if is_inside(dest, root) or is_inside(root, dest):
                 return messagebox.showerror(APP_NAME, "El destino en el HDD no puede estar adentro de la carpeta "
                                                       "analizada (ni al revés).")
-        when, hour = ui["when"].get(), ui["hour"].get()
-        if pr["action"] == "delete":
-            what = ("BORRAR PARA SIEMPRE, sin preguntar:\n  · temporales con más de 1 día\n"
-                    f"  · caches que no se usaron en los últimos {CACHE_QUIET_DAYS} días\n"
-                    "  · node_modules/.venv de proyectos quietos hace más de 30 días\n"
-                    "  · instaladores e ISOs de Descargas con más de 30 días\n\n"
-                    "Nunca vacía la papelera ni toca lo marcado REVISAR, lo del HDD o nada protegido.")
-        else:
-            what = ("MOVER al HDD, sin preguntar, los proyectos de DAW/video y la media pesada sin tocar "
-                    f"hace más de 6 meses.\nDestino: {dest}\n\nCada archivo se borra solo si su copia "
-                    "verificó con SHA-256. Si el HDD no está conectado, no hace nada.")
-        if not messagebox.askyesno(APP_NAME, f"{pr['title']} · {when} a las {hour}\n"
-                                             f"Carpeta: {root}\n\nVa a {what}\n\n¿Lo programo?"):
-            return
+        when, hour = (v.get() for v in self.auto_vars[key])
         try:
             ok, msg = schedule_task(key, when, hour, root, dest)
         except OSError as e:
@@ -2324,7 +2877,7 @@ class App:
         self.cfg.setdefault("auto", {})[key] = dict(when=when, hour=hour, root=root, dest=dest)
         save_config(self.cfg)
         self._write("ok", f"programado: {pr['title']} · {when} a las {hour} · {root}" + (f" → {dest}" if dest else ""))
-        self._refresh_auto()
+        self._go("auto", 2)
 
     def _unschedule(self, key):
         pr = PRESETS[key]
@@ -2334,7 +2887,7 @@ class App:
         self.cfg.get("auto", {}).pop(key, None)
         save_config(self.cfg)
         self._write("ok" if ok else "err", f"«{pr['title']}» ya no está programado" if ok else f"no pude quitarlo: {msg}")
-        self._refresh_auto()
+        self._go("auto", 0)
 
     def _run_task_now(self, key):
         pr = PRESETS[key]
@@ -2342,111 +2895,35 @@ class App:
                                              f"más (igual que cuando la dispara {OS_NAME}).\n\n¿Dale?", icon="warning"):
             return
         ok, msg = run_task_now(key)
-        self._write("ok" if ok else "err", f"«{pr['title']}» lanzada. El resultado aparece en ÚLTIMAS CORRIDAS "
-                                           "cuando termine (ACTUALIZAR)." if ok else f"no pude lanzarla: {msg}")
+        self._write("ok" if ok else "err", f"«{pr['title']}» lanzada. El resultado aparece en «últimas corridas» "
+                                           "cuando termine." if ok else f"no pude lanzarla: {msg}")
 
-    # ── animaciones y números grandes
-    def _blink(self):
-        cur = self.cursor.cget("fg")
-        self.cursor.configure(fg=BG if cur == FG else FG)
-        self.root.after(530, self._blink)
+    # ── LOG
+    def _build_log(self, p):
+        top = tk.Frame(p, bg=BG)
+        top.pack(fill="x", pady=(18, 10))
+        tk.Label(top, text="log de esta sesión", bg=BG, fg=TEXT, font=font(13)).pack(side="left")
+        self._link(top, "logs del hdd", self._open_logs, pack=False).pack(side="right", padx=(12, 0))
+        self._link(top, "logs de borrado", lambda: open_folder(str(DELETE_LOG_DIR)) if DELETE_LOG_DIR.is_dir()
+                   else messagebox.showinfo(APP_NAME, "Todavía no hay logs."), pack=False).pack(side="right")
+        fr = tk.Frame(p, bg=BG)
+        fr.pack(fill="both", expand=True, pady=(0, 8))
+        self.log = tk.Text(fr, bg=PANEL, fg=TEXT, font=font(9), relief="flat", wrap="word",
+                           highlightthickness=1, highlightbackground=LINE, insertbackground=GREEN,
+                           padx=12, pady=10, state="disabled", spacing1=2)
+        sb = ttk.Scrollbar(fr, command=self.log.yview, style="Vault.Vertical.TScrollbar")
+        self.log.configure(yscrollcommand=sb.set)
+        self.log.pack(side="left", fill="both", expand=True)
+        sb.pack(side="left", fill="y")
+        for tag, color in (("info", MUTED), ("ok", GREEN), ("warn", ORANGE), ("err", RED), ("time", FAINT)):
+            self.log.tag_configure(tag, foreground=color)
 
-    def _tween(self, key, start, end, fn, ms=700):
-        """Anima un número de start a end (frena al final)."""
-        if key in self._anims:
-            self.root.after_cancel(self._anims.pop(key))
-        steps = max(1, ms // 30)
-
-        def step(i):
-            t = i / steps
-            fn(start + (end - start) * (1 - (1 - t) ** 3))
-            if i < steps:
-                self._anims[key] = self.root.after(30, step, i + 1)
-            else:
-                self._anims.pop(key, None)
-        step(1)
-
-    def _set_hero(self, key, value, animate=True):
-        def put(v):
-            self.hero[key] = v
-            self.hero_lbl[key].configure(text=human(v))
-        if animate:
-            self._tween(f"hero:{key}", self.hero[key], float(value), put)
-        else:
-            put(float(value))
-
-    def _set_total(self, tot):
-        self.total_var.set(f"liberado en total: {human(tot)}" if tot else "")
-
-    def _update_dest_txt(self):
-        d = self.dest.get()
-        if not d:
-            self.dest_txt.set("HDD: sin elegir")
-        else:
-            self.dest_txt.set(f"HDD: {d}" + ("" if os.path.isdir(d) else "  (no conectado)"))
-
-    def _refresh_disk(self, animate=True):
-        root = self.an_root.get()
-        try:
-            u = shutil.disk_usage(root)
-        except OSError:
-            self.disk = None
-            self.hero_cap["free"].configure(text="libres")
-            self._draw_disk()
-            return
-        drive = volume_of(root)
-        self.disk = (drive, u.total, u.used, u.free)
-        self.hero_cap["free"].configure(text=f"libres en {volume_label(drive)} de {human(u.total)}")
-        self._set_hero("free", u.free, animate)
-        self._draw_disk()
-
-    def _draw_disk(self):
-        c = self.diskc
-        c.delete("all")
-        w, h = c.winfo_width(), c.winfo_height()
-        if w < 10:
-            return
-        c.create_rectangle(0, 0, w, h, fill=PANEL, outline=DIM)
-        if self.disk:
-            _drive, total, used, free = self.disk
-            clean, keep = self._totals(same_drive=True)
-            xu = w * used / total
-            c.create_rectangle(0, 0, xu, h, fill=DISK_USED, outline="")
-            if self._scan_phase is None:
-                wk, wc = w * min(keep, used) / total, w * min(clean, used) / total
-                c.create_rectangle(xu - wc - wk, 0, xu - wc, h, fill=CYAN, outline="")
-                c.create_rectangle(xu - wc, 0, xu, h, fill=FG, outline="")
-            self.leg["used"].configure(text=f"usado {human(used)}")
-            self.leg["clean"].configure(text=f"limpiable {human(clean)}")
-            self.leg["keep"].configure(text=f"al HDD {human(keep)}")
-            self.leg["free"].configure(text=f"libre {human(free)}")
-        if self._scan_phase is not None:  # barrido mientras analiza
-            x = (self._scan_phase * 14) % (w + 120) - 120
-            for i in range(6):
-                c.create_rectangle(x + i * 20, 2, x + i * 20 + 16, h - 2, fill=FG if i == 5 else DIM, outline="")
-        for x in range(8, w, 8):  # bloques retro
-            c.create_line(x, 0, x, h, fill=BG, width=2)
-        if self._flash and time.time() < self._flash[1]:
-            c.create_text(w / 2, h / 2, text=self._flash[0], fill="#ffffff", font=(MONO, 11, "bold"))
-
-    def _scan_anim(self):
-        if self._scan_phase is None:
-            return
-        self._scan_phase += 1
-        self._draw_disk()
-        self.root.after(40, self._scan_anim)
-
-    def _flash_msg(self, text, secs=5):
-        self._flash = (text, time.time() + secs)
-        self._draw_disk()
-        self.root.after(int(secs * 1000) + 50, self._draw_disk)
-
-    # ── tarjetas
+    # ── tarjetas (categorías del análisis)
     def _card_on(self, rec):
         return self.cards_on.get(rec.key, CARD_DEFAULT[rec.safety])
 
     def _card_items(self, rec):
-        """Lo que la tarjeta realmente toca: las caches en uso quedan afuera."""
+        """Lo que la categoría realmente toca: las caches en uso quedan afuera."""
         if rec.key != "cache":
             return rec.items, 0
         cut = time.time() - CACHE_QUIET_DAYS * DAY
@@ -2470,78 +2947,6 @@ class App:
                     clean += it.size
         return clean, keep
 
-    def _render_cards(self):
-        for w in self.cards_box.winfo_children():
-            w.destroy()
-        self.cards.clear()
-        rep = self.report
-        if self._scan_phase is not None:
-            self._label(self.cards_box, var=self.status, color=TEXT).pack(fill="x", pady=20, padx=8)
-            return
-        if not rep:
-            self._label(self.cards_box, "Dale a ▶ ANALIZAR. Reviso la carpeta SIN TOCAR NADA y te muestro qué se puede "
-                                        "limpiar y qué conviene guardar en el HDD.", TEXT, 10).pack(
-                fill="x", pady=20, padx=8)
-            return
-        if not rep.recs:
-            self._label(self.cards_box, "✔ todo en orden: no encontré nada para limpiar ni para guardar.", FG, 11,
-                        True).pack(fill="x", pady=20, padx=8)
-            return
-        for rec in rep.recs:
-            self._make_card(rec)
-
-    def _make_card(self, rec):
-        color = SAFETY_COLOR[rec.safety]
-        f = tk.Frame(self.cards_box, bg=PANEL, highlightthickness=1, cursor="hand2")
-        f.pack(fill="x", pady=(0, 6))
-        top = tk.Frame(f, bg=PANEL)
-        top.pack(fill="x", padx=10, pady=(6, 0))
-        chk = tk.Label(top, bg=PANEL, font=(MONO, 12, "bold"))
-        chk.pack(side="left")
-        tag = tk.Label(top, text=SAFETY_TAG[rec.safety], bg=PANEL, fg=color, font=(MONO, 9, "bold"), width=8)
-        tag.pack(side="left", padx=(6, 6))
-        title = tk.Label(top, text=rec.title, bg=PANEL, font=(MONO, 10, "bold"), anchor="w")
-        title.pack(side="left", fill="x", expand=True)
-        more = tk.Label(top, text="ver ›", bg=PANEL, fg=MUTED, font=(MONO, 9))
-        more.pack(side="right", padx=(10, 0))
-        items, skipped = self._card_items(rec)
-        size = tk.Label(top, text=human(sum(i.size for i in items)), bg=PANEL, font=(MONO, 12, "bold"))
-        size.pack(side="right")
-        count = f"{len(items)} ítem{'s' if len(items) != 1 else ''}"
-        if skipped:
-            count += f" · {skipped} en uso, se saltean"
-        if rec.key == "dups":
-            same = sum(1 for i in items if i.ref and same_folder(i.path, i.ref))
-            count += f" · {same} en la misma carpeta que el original · {len(items) - same} en otra carpeta"
-        why = rec.why.split(". ")[0].rstrip(".") + "."
-        sub = tk.Label(f, text=f"{count}  ·  {why}", bg=PANEL, fg=MUTED, font=(MONO, 8), anchor="w",
-                       justify="left", wraplength=820)
-        sub.pack(fill="x", padx=10, pady=(0, 6))
-        self.cards[rec.key] = dict(frame=f, chk=chk, title=title, size=size, color=color)
-        for w in (f, top, chk, tag, title, size, sub):
-            w.bind("<Button-1>", lambda e, k=rec.key: self._toggle_card(k))
-            w.bind("<Enter>", lambda e, k=rec.key: self._hover_card(k, True))
-            w.bind("<Leave>", lambda e, k=rec.key: self._hover_card(k, False))
-        more.bind("<Button-1>", lambda e, k=rec.key: self._show_detail(k))
-        more.bind("<Enter>", lambda e: more.configure(fg=TEXT))
-        more.bind("<Leave>", lambda e: more.configure(fg=MUTED))
-        self._style_card(rec)
-
-    def _style_card(self, rec, hover=False):
-        c = self.cards.get(rec.key)
-        if not c:
-            return
-        on = self._card_on(rec)
-        c["chk"].configure(text="[■]" if on else "[ ]", fg=c["color"] if on else MUTED)
-        c["title"].configure(fg=TEXT if on else MUTED)
-        c["size"].configure(fg=c["color"] if on else MUTED)
-        c["frame"].configure(highlightbackground=TEXT if hover else (c["color"] if on else DIM))
-
-    def _hover_card(self, key, on):
-        rec = next((r for r in (self.report.recs if self.report else []) if r.key == key), None)
-        if rec:
-            self._style_card(rec, hover=on)
-
     def _toggle_card(self, key):
         if self._is_busy or not self.report:
             return
@@ -2551,74 +2956,7 @@ class App:
         self.cards_on[key] = not self._card_on(rec)
         self.cfg["cards"] = self.cards_on
         save_config(self.cfg)
-        self._style_card(rec, hover=True)
-        self._update_totals()
-
-    def _show_detail(self, key):
-        self.nb.select(self.tab_detail)
-        self.anb.select(self.anb.tabs()[0])
-        iid = f"r:{key}"
-        if self.t_rec.exists(iid):
-            self.t_rec.item(iid, open=True)
-            self.t_rec.selection_set(iid)
-            self.t_rec.see(iid)
-
-    def _update_totals(self, animate=True):
-        clean, keep = self._totals()
-        if self._scan_phase is not None:  # analizando: todavía no hay números
-            clean = keep = 0
-            for k in ("clean", "keep"):
-                self.hero_lbl[k].configure(text="···")
-        elif self.report:
-            self._set_hero("clean", clean, animate)
-            self._set_hero("keep", keep, animate)
-        else:
-            for k in ("clean", "keep"):
-                self.hero[k] = 0.0
-                self.hero_lbl[k].configure(text="—")
-        self.b_clean.configure(text=f"✖ LIMPIAR {human(clean)}" if clean else "✖ LIMPIAR")
-        self.b_keep.configure(text=f"→ GUARDAR {human(keep)} EN EL HDD" if keep else "→ GUARDAR EN EL HDD")
-        self._set_btn(self.b_clean, bool(clean) and not self._is_busy)
-        self._set_btn(self.b_keep, bool(keep) and not self._is_busy)
-        self._draw_disk()
-
-    @staticmethod
-    def _set_btn(b, on):
-        bg, fg = b._colors
-        b.configure(state="normal" if on else "disabled", bg=bg if on else PANEL, fg=fg if on else MUTED)
-
-    # ── acciones de INICIO
-    def _clean(self):
-        if not self.report:
-            return
-        paths = []
-        for rec in self.report.recs:
-            if rec.action != "vault" and self._card_on(rec):
-                paths += [i.path for i in self._card_items(rec)[0]]
-        self._delete_flow(paths)
-
-    def _keep(self):
-        if not self.report:
-            return
-        paths = []
-        for rec in self.report.recs:
-            if rec.action == "vault" and self._card_on(rec):
-                paths += [i.path for i in rec.items if os.path.exists(i.path)]
-        if not paths:
-            return
-        if not (self.dest.get() and os.path.isdir(self.dest.get())):
-            messagebox.showinfo(APP_NAME, "Elegí el HDD externo (o una carpeta adentro, tipo "
-                                          + ("/Volumes/HDD/Guardado)." if IS_MAC else "E:\\Guardado)."))
-            self._pick_dest()
-            if not (self.dest.get() and os.path.isdir(self.dest.get())):
-                return
-        saved = list(self.sources)
-        self.sources = []
-        self._prep_vault(paths)
-        self._saved_sources = saved
-        if not self._run():  # cancelaste o el chequeo previo frenó: vuelve tu lista manual
-            self.sources, self._saved_sources = saved, None
-            self._refresh_list()
+        self._render("keep" if rec.action == "vault" else "clean")
 
     # ── origen / destino
     def _age_days(self):
@@ -2633,9 +2971,12 @@ class App:
         self._refresh_list()
 
     def _refresh_list(self):
-        self.listbox.delete(0, "end")
-        for s in self.sources:
-            self.listbox.insert("end", ("▣ " if os.path.isdir(s) else "· ") + s)
+        if self.step["keep"] == 1:
+            self._render("keep")
+
+    def _remove_source(self, s):
+        self.sources = [x for x in self.sources if x != s]
+        self._refresh_list()
 
     def _add_dir(self):
         d = filedialog.askdirectory(title="Carpeta a guardar en el HDD")
@@ -2650,33 +2991,39 @@ class App:
         for p in self.root.tk.splitlist(event.data):
             self._add_source(p)
 
-    def _remove_sel(self):
-        idx = set(self.listbox.curselection())
-        self.sources = [s for i, s in enumerate(self.sources) if i not in idx]
-        self._refresh_list()
-
-    def _clear(self):
-        self.sources = []
-        self._refresh_list()
-
-    def _pick_dest(self):
+    def _pick_dest(self, then=None):
         d = filedialog.askdirectory(title="Elegí el HDD externo (o una carpeta adentro)")
         if d:
             self.dest.set(os.path.abspath(d))
             self.cfg["dest"] = self.dest.get()
             save_config(self.cfg)
-        self._update_dest_txt()
+        self._draw_head()
+        if then is not None and self.dest.get() and os.path.isdir(self.dest.get()):
+            self._go("keep", then)
+        elif not self._is_busy:
+            self._render("keep")
 
     def _pick_an_root(self):
+        if self._is_busy:
+            return
         d = filedialog.askdirectory(title="¿Qué analizo? (tu usuario o un disco)", initialdir=self.an_root.get())
         if d:
-            self.an_root.set(os.path.abspath(d))
-            self.cfg["an_root"] = self.an_root.get()
-            save_config(self.cfg)
-            if self.report and _norm(self.report.root) != _norm(self.an_root.get()):
-                self.report = None  # el análisis era de otra carpeta
-                self._render_report()
-            self._refresh_disk()
+            self._set_an_root(d)
+
+    def _on_root_drop(self, event):
+        paths = [p for p in self.root.tk.splitlist(event.data) if os.path.isdir(p)]
+        if paths and not self._is_busy:
+            self._set_an_root(paths[0])
+
+    def _set_an_root(self, d):
+        self.an_root.set(os.path.abspath(d))
+        self.cfg["an_root"] = self.an_root.get()
+        save_config(self.cfg)
+        if self.report and _norm(self.report.root) != _norm(self.an_root.get()):
+            self.report = None  # el análisis era de otra carpeta
+            self._render_report()
+        self._refresh_disk()
+        self._render("clean")
 
     def _open_logs(self):
         d = Path(self.dest.get() or ".")
@@ -2689,62 +3036,38 @@ class App:
     # ── estado
     def _busy(self, on):
         self._is_busy = on
-        for b in self.run_buttons:
-            if b in (self.b_clean, self.b_keep):
-                continue
-            b.configure(state="disabled" if on else "normal")
-        for b in self.cancel_buttons:
-            b.configure(state="normal" if on else "disabled")
-        self._update_totals(animate=False)
+        for b in (self.b_send, self.b_del):
+            self._set_btn(b, not on)
+        self._rerender()
 
-    def _start(self, target, *args):
+    def _start(self, kind, target, *args):
         self.cancel.clear()
-        self._busy(True)
+        self.busy_kind = kind
         self.worker = threading.Thread(target=target, args=args, daemon=True)
+        self._busy(True)
         self.worker.start()
 
-    # ── acciones GUARDA (vault)
-    def _scan(self):
-        if not self.sources:
-            return messagebox.showwarning(APP_NAME, "Agregá algo primero.")
-        self.status.set("escaneando…")
-        days = self._age_days()
-
-        def work():
-            try:
-                files, _d, total, errs, recent = scan(self.sources, self.cancel, days)
-                self.q.put(("scanned", len(files), total, len(errs), recent))
-            except Cancelled:
-                self.q.put(("scanned", None, 0, 0, 0))
-
-        self._start(work)
-
-    def _run(self) -> bool:
-        """Chequea, confirma y arranca. Devuelve True si arrancó."""
+    def _run(self, confirm=True) -> bool:
+        """Chequea, (confirma) y arranca el guardado en el HDD. Devuelve True si arrancó."""
         mode = self.mode.get()
         errors, warnings = preflight(self.sources, self.dest.get(), mode)
         if errors:
             messagebox.showerror(APP_NAME, "\n\n".join(errors))
             return False
-        if warnings and not messagebox.askyesno(APP_NAME, "\n\n".join(warnings) + "\n\n¿Sigo igual?"):
+        if confirm and warnings and not messagebox.askyesno(APP_NAME, "\n\n".join(warnings) + "\n\n¿Sigo igual?"):
             return False
         days = self._age_days()
-        filt = f"\n\nFiltro: solo archivos sin modificar hace más de {days} días." if days else ""
-        n = len(self.sources)
-        if mode == MODE_MOVE and not messagebox.askyesno(
-                APP_NAME,
-                f"Vas a GUARDAR {n} elemento(s) en el HDD:\n{self.dest.get()}\n\n"
-                "Cada archivo se copia, se verifica con SHA-256 y SOLO si coincide se borra el original "
-                "(definitivo, no va a la papelera)." + filt + "\n\n¿Dale?"):
-            return False
         self.cfg.update(dest=self.dest.get(), mode=mode, age=self.age.get(), full_path=self.full_path.get())
         save_config(self.cfg)
         self.bar.configure(mode="determinate")
         self.bar["value"] = 0
+        self.stats_txt.set("arrancando…")
         self._write("ok", f"── arranca: {'MOVER' if mode == MODE_MOVE else 'COPIA'} → {self.dest.get()}"
                           + (f" · filtro +{days} días" if days else ""))
         emit = lambda *a: self.q.put(a)  # noqa: E731
-        self._start(run_job, list(self.sources), self.dest.get(), mode, self.cancel, emit, days, self.full_path.get())
+        self.step["keep"] = 3
+        self._start("vault", run_job, list(self.sources), self.dest.get(), mode, self.cancel, emit, days,
+                    self.full_path.get())
         return True
 
     def _cancel(self):
@@ -2759,8 +3082,10 @@ class App:
             self.worker.join(timeout=5)
         self.root.destroy()
 
-    # ── acciones ANÁLISIS
+    # ── análisis
     def _analyze(self):
+        if self._is_busy:
+            return
         root = self.an_root.get()
         if not os.path.isdir(root):
             return messagebox.showerror(APP_NAME, f"No existe: {root}")
@@ -2769,13 +3094,10 @@ class App:
         self.bar.configure(mode="indeterminate")
         self.bar.start(12)
         self._write("ok", f"── análisis de {root}")
-        self.nb.select(self.tab_home)
-        self._refresh_disk(animate=False)
-        self._scan_phase = 0
-        self._render_cards()
-        for k in ("clean", "keep"):
-            self.hero_lbl[k].configure(text="···")
-        self._scan_anim()
+        self.nb.select(self.tab_clean)
+        self._refresh_disk()
+        self.status.set("arrancando el análisis…")
+        self.step["clean"] = 0
 
         def work():
             try:
@@ -2787,20 +3109,19 @@ class App:
                 self.q.put(("log", "err", f"Error en el análisis: {e}"))
                 self.q.put(("an_done", None))
 
-        self._start(work)
+        self._start("analyze", work)
 
     def _render_report(self, keep_zoom=False):
         rep = self.report
-        for t in self.trees:
+        for t in self.trees.values():
             t.delete(*t.get_children())
         self.iid_paths.clear()
         self.iid_hint.clear()
         self.path_info.clear()
         self.map.set_tree(rep.tree if rep else None, keep_zoom)
-        self._render_cards()
-        self._update_totals()
+        self._show_ex()
         if not rep:
-            self.an_summary.set("todavía no analizaste nada. arrancá en INICIO.")
+            self.ex_summary.configure(text="")
             return
         for rec in rep.recs:
             pid = f"r:{rec.key}"
@@ -2859,12 +3180,14 @@ class App:
                 self.iid_paths[cid] = [q]
                 self.iid_hint[cid] = q
                 self.path_info.setdefault(q, (t, "manual"))
-        safe, rev, vault = rep.by_safety("seguro"), rep.by_safety("revisar"), rep.by_safety("vault")
-        extra = f" · {rep.cloud} solo-en-la-nube ignorados" if rep.cloud else ""
-        self.an_summary.set(f"{human(rep.total)} en {rep.n_files:,} archivos · ".replace(",", ".")
-                            + f"seguro: {human(safe)} · a revisar: {human(rev)} · "
-                            f"para el HDD: {human(vault)}{extra}")
-        self.an_hint.set("seleccioná algo para ver por qué está recomendado.")
+        self.ex_summary.configure(text=f"{human(rep.total)} en {rep.n_files:,} archivos".replace(",", ".")
+                                  + (f" · {rep.cloud} solo en la nube, ignorados" if rep.cloud else ""))
+
+    def _summary(self):
+        rep = self.report
+        return (f"{human(rep.total)} en {rep.n_files:,} archivos · ".replace(",", ".")
+                + f"seguro: {human(rep.by_safety('seguro'))} · a revisar: {human(rep.by_safety('revisar'))} · "
+                  f"para el HDD: {human(rep.by_safety('vault'))}")
 
     def _on_select(self, event):
         t = event.widget
@@ -2875,8 +3198,7 @@ class App:
         hint = self.iid_hint.get(t.focus() or sel[0], "")
         self.an_hint.set(f"selección: {human(tot)}  ·  {hint}")
 
-    def _selected_paths(self, tree=None):
-        tree = tree or self.trees[self.anb.index(self.anb.select())]
+    def _selected_paths(self, tree):
         seen, out = set(), []
         for iid in tree.selection():
             for p in self.iid_paths.get(iid, []):
@@ -2885,43 +3207,47 @@ class App:
                     out.append(p)
         dirs = sorted((p for p in out if p != BIN_PATH and os.path.isdir(p)), key=len)
         if dirs:  # si elegiste una carpeta y algo de adentro, queda solo la carpeta
-            keep = []
-            for p in out:
-                if p != BIN_PATH and any(d != p and is_inside(p, d) for d in dirs):
-                    continue
-                keep.append(p)
-            out = keep
+            out = [p for p in out if p == BIN_PATH or not any(d != p and is_inside(p, d) for d in dirs)]
         return out
 
     def _map_paths(self):
         n = self.map.sel
         return [n.path] if n is not None and n.path else []
 
-    def _prep_vault(self, paths):
-        """Carga rutas en GUARDA con la configuración correcta para lo que viene del análisis."""
-        for p in paths:
-            self._add_source(p)
-        self.full_path.set(True)
-        self.mode.set(MODE_MOVE)
-        if self._age_days():  # con filtro, un proyecto podría quedar mitad acá y mitad en el HDD
-            self.age.set(AGE_OPTIONS[0][0])
-            self._write("info", "filtro puesto en 'todo': lo que viene del análisis ya está filtrado por antigüedad "
-                                "y los proyectos tienen que viajar enteros.")
-
     def _send_paths(self, paths):
         paths = [p for p in paths if p != BIN_PATH and os.path.exists(p)]
         if not paths:
             return messagebox.showinfo(APP_NAME, "Seleccioná qué guardar en el HDD.")
-        self._prep_vault(paths)
-        self.nb.select(self.tab_v)
-        self._write("ok", f"{len(paths)} elemento(s) cargados en GUARDA MANUAL con ruta completa. "
-                          "Revisá y dale a EJECUTAR.")
+        for p in paths:
+            self._add_source(p)
+        self.full_path.set(True)
+        if self._age_days():  # con filtro, un proyecto podría quedar mitad acá y mitad en el HDD
+            self.age.set(AGE_OPTIONS[0][0])
+        self._write("ok", f"{len(paths)} elemento(s) sumados a GUARDAR EN HDD.")
+        self.nb.select(self.tab_keep)
+        self._go("keep", 1 if self.dest.get() and os.path.isdir(self.dest.get()) else 0)
 
-    def _delete_flow(self, paths):
-        """Confirmación única con todos los avisos, y después borra en segundo plano."""
+    def _delete_warnings(self, paths):
+        kinds = {self.path_info.get(p, (0, "manual"))[1] for p in paths if p != BIN_PATH}
+        out = []
+        if BIN_PATH in paths:
+            out.append(f"Incluye vaciar la {BIN_NAME.lower()}.")
+        if "vault" in kinds:
+            out.append("⚠ Hay cosas recomendadas para GUARDAR en el HDD, no para borrar. Si las borrás, no vuelven.")
+        if "revisar" in kinds:
+            out.append("⚠ Hay cosas marcadas para REVISAR. Asegurate de que no sean lo único que tenés.")
+        if "sistema" in kinds or any(f"{os.sep}AppData{os.sep}" in p for p in paths
+                                     if self.path_info.get(p, (0, ""))[1] not in ("seguro", "revisar")
+                                     and p != BIN_PATH):
+            out.append("⚠ Hay archivos de programas (AppData/sistema): borrarlos puede romper apps.")
+        return out
+
+    def _delete_flow(self, paths, confirm=True, origin=None):
+        """Borra en segundo plano. Desde EXPLORAR pide confirmación; desde LIMPIAR el paso ya la pidió."""
         if not paths:
             return messagebox.showinfo(APP_NAME, "Seleccioná qué borrar.")
         has_bin = BIN_PATH in paths
+        warn = self._delete_warnings(paths)
         paths = [p for p in paths if p != BIN_PATH]
         protected = [p for p in paths if is_protected(p)]
         if protected:
@@ -2929,30 +3255,22 @@ class App:
                                         + "\n".join(protected[:8]))
         bin_size = self.path_info.get(BIN_PATH, (0,))[0] if has_bin else 0
         size = sum(self.path_info.get(p, (0,))[0] for p in paths) + bin_size
-        kinds = {self.path_info.get(p, (0, "manual"))[1] for p in paths}
-        warn = ""
-        if "vault" in kinds:
-            warn += "\n⚠ Hay cosas recomendadas para GUARDAR en el HDD, no para borrar. Si las borrás, no vuelven.\n"
-        if "revisar" in kinds:
-            warn += "\n⚠ Hay cosas marcadas para REVISAR. Asegurate de que no sean lo único que tenés.\n"
-        if "sistema" in kinds or any(f"{os.sep}AppData{os.sep}" in p for p in paths
-                                     if self.path_info.get(p, (0, ""))[1] != "seguro"):
-            warn += "\n⚠ Hay archivos de programas (AppData/sistema): borrarlos puede romper apps.\n"
-        lines = []
-        if has_bin:
-            lines.append(f"  · vaciar la {BIN_NAME.lower()} ({human(bin_size)})")
-        lines += ["  " + (p if len(p) < 80 else "…" + p[-78:]) for p in paths[:6]]
-        more = f"\n  … y {len(paths) - 6} más" if len(paths) > 6 else ""
         n = len(paths) + (1 if has_bin else 0)
-        if not messagebox.askyesno(
-                APP_NAME,
-                f"Vas a BORRAR PARA SIEMPRE {n} elemento(s), ~{human(size)}.\n"
-                f"No pasa por la papelera (así se libera el espacio de verdad).\n{warn}\n"
-                + "\n".join(lines) + f"{more}\n\n¿Dale?", icon="warning"):
-            return
+        if confirm:
+            lines = ["  " + (p if len(p) < 80 else "…" + p[-78:]) for p in paths[:6]]
+            more = f"\n  … y {len(paths) - 6} más" if len(paths) > 6 else ""
+            if not messagebox.askyesno(
+                    APP_NAME,
+                    f"Vas a BORRAR PARA SIEMPRE {n} elemento(s), ~{human(size)}.\n"
+                    f"No pasa por la papelera (así se libera el espacio de verdad).\n\n"
+                    + "".join(w + "\n" for w in warn) + "\n" + "\n".join(lines) + f"{more}\n\n¿Dale?",
+                    icon="warning"):
+                return
         self.bar.configure(mode="indeterminate")
         self.bar.start(12)
         self._write("warn", f"── borrando {n} elemento(s)…")
+        if origin == "clean":
+            self.step["clean"] = 3
 
         def work():
             if paths:
@@ -2968,7 +3286,7 @@ class App:
                     self.q.put(("log", "err", "no pude vaciar la papelera"))
             self.q.put(("del_done", res))
 
-        self._start(work)
+        self._start("delete", work)
 
     def _open_paths(self, paths):
         paths = [p for p in paths if p != BIN_PATH]
@@ -2987,14 +3305,15 @@ class App:
 
     def _write(self, level, msg):
         self.log.configure(state="normal")
-        self.log.insert("end", f"{datetime.now():%H:%M:%S}  {msg}\n", level)
+        self.log.insert("end", f"{datetime.now():%H:%M:%S}  ", "time")
+        self.log.insert("end", f"{msg}\n", level)
         if int(self.log.index("end-1c").split(".")[0]) > 5000:
             self.log.delete("1.0", "1000.0")
         self.log.see("end")
         self.log.configure(state="disabled")
         short = msg if len(msg) < 140 else msg[:137] + "…"
         self.last_msg.set(f"› {short}")
-        self.last_lbl.configure(fg={"info": MUTED, "ok": FG, "warn": WARN, "err": ERR}.get(level, MUTED))
+        self.last_lbl.configure(fg={"info": MUTED, "ok": GREEN, "warn": ORANGE, "err": RED}.get(level, MUTED))
 
     def _on_log(self, level, msg):
         self._write(level, msg)
@@ -3013,24 +3332,7 @@ class App:
         speed = st["done_bytes"] / elapsed if elapsed > 0 else 0
         eta = (st["total_bytes"] - st["done_bytes"]) / speed if speed > 0 else 0
         self.stats_txt.set(f"{human(st['done_bytes'])} / {human(st['total_bytes'])} · {human(speed)}/s · "
-                           f"faltan ~{int(eta // 60)}m{int(eta % 60):02d}s · liberado {human(st['freed'])} · "
-                           f"errores {st['errors']}")
-
-    def _on_scanned(self, n, total, nerr, recent):
-        self._busy(False)
-        if n is None:
-            self.status.set("escaneo cancelado")
-            return
-        self.status.set("escaneo listo")
-        msg = f"escaneo: {n} archivos · {human(total)}"
-        if self._age_days():
-            msg += f" · {recent} recientes quedan afuera por el filtro"
-        self._write("info", msg + (f" · {nerr} sin acceso" if nerr else ""))
-        dest = self.dest.get()
-        if dest and os.path.isdir(dest):
-            free = shutil.disk_usage(dest).free
-            lvl = "ok" if free > total else "err"
-            self._write(lvl, f"libre en destino: {human(free)}" + ("" if free > total else "  ← NO ENTRA"))
+                           f"faltan ~{int(eta // 60)}m{int(eta % 60):02d}s")
 
     def _forget_gone(self, gone=()):
         """Saca del análisis lo que ya no existe (borrado o movido al HDD)."""
@@ -3048,21 +3350,21 @@ class App:
         self._render_report(keep_zoom=True)
 
     def _after_change(self, freed):
-        """Después de borrar o mover: contador histórico, disco animado y festejo."""
         if freed > 0:
             self._set_total(add_freed(freed))
-            self._flash_msg(f"✔ liberaste {human(freed)}")
         self._refresh_disk()
 
-    def _on_done(self, st):
-        self._busy(False)
+    def _finish(self):
+        self.busy_kind = None
         self.worker = None
+        self._busy(False)
+
+    def _on_done(self, st):
         if st.get("aborted"):
             self.status.set("abortado: no hay lugar en el destino")
         else:
             if not st["cancelled"]:
                 self.bar["value"] = 1000
-            self._on_progress(st, 1)
             lvl = "err" if st["errors"] else ("warn" if st["cancelled"] or st["skipped"] else "ok")
             self._write(lvl, f"✔ fin · copiados {st['copied']} · ya estaban {st['already']} · borrados {st['deleted']} · "
                              f"LIBERADO {human(st['freed'])} · salteados {st['skipped']} · errores {st['errors']}")
@@ -3070,38 +3372,35 @@ class App:
                 self._write("info", f"log: {st['log_path']}")
             self.status.set("listo." if not st["cancelled"] else "cancelado.")
             self.root.bell()
-        if self._saved_sources is not None:  # vuelve la lista manual que había antes de GUARDAR
-            self.sources, self._saved_sources = [s for s in self._saved_sources if os.path.exists(s)], None
-        elif self.mode.get() == MODE_MOVE:
-            self.sources = [s for s in self.sources if os.path.exists(s)]
-        self._refresh_list()
+        if self._saved_sources is not None:  # lo elegido a mano que no se movió queda en la lista
+            gone = set(self.sources) - set(self._saved_sources)
+            self.sources = [s for s in self._saved_sources if os.path.exists(s) and s not in gone]
+            self._saved_sources = None
+        self.result["keep"] = st
+        self.step["keep"] = 3
         if st.get("freed"):
             self._forget_gone()
             self._after_change(st["freed"])
+        self._finish()
 
     def _on_an_done(self, rep):
-        self._scan_phase = None
-        self._busy(False)
-        self.worker = None
         self._stop_bar(rep is not None)
         if rep is None:
             self.status.set("análisis cancelado.")
-            self._render_cards()
-            self._update_totals(animate=False)
+            self._finish()
             return
-        self.hero["clean"] = self.hero["keep"] = 0.0  # los números grandes cuentan desde cero
         self.report = rep
         self._render_report()
         self._refresh_disk()
         self.status.set(f"análisis listo en {rep.elapsed:.1f}s · {rep.n_dirs:,} carpetas".replace(",", "."))
-        self._write("ok", "✔ " + self.an_summary.get())
+        self._write("ok", "✔ " + self._summary())
         if rep.errors:
             self._write("info", f"{rep.errors} carpetas/archivos sin permiso de lectura (normal en carpetas de sistema).")
+        self.step["clean"] = 1
         self.root.bell()
+        self._finish()
 
     def _on_del_done(self, res):
-        self._busy(False)
-        self.worker = None
         self._stop_bar()
         gone = set(res["deleted"])
         lvl = "warn" if res["errors"] else "ok"
@@ -3110,12 +3409,13 @@ class App:
                          + (f" · {res['errors']} con problemas" if res["errors"] else ""))
         if res.get("log_path"):
             self._write("info", f"log: {res['log_path']}")
-        self.stats_txt.set(f"liberado en esta pasada: {human(res['freed'])}")
         self.status.set("listo.")
+        self.result["clean"] = res
         if self.report and res.get("bin"):
             self.report.recs = [r for r in self.report.recs if r.key != "bin"]
         self._forget_gone(gone)
         self._after_change(res["freed"])
+        self._finish()
 
 
 def main():

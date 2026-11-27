@@ -1,4 +1,4 @@
-# ▓▒░ Limpia&Guarda v0.4.1 · by Teskadev
+# ▓▒░ Limpia&Guarda v1.0.0 · by Teskadev
 
 **Analizá** qué te come el disco → **limpiá** lo que sobra → **guardá en el HDD** externo lo que no usás (verificado con SHA-256).
 Sin fe, con hashes.
@@ -17,7 +17,7 @@ GitHub Actions (`.github/workflows/build.yml`) arma los instaladores en cada pus
 - `LimpiaGuarda-Windows-Instalador.exe`: instalador de Windows (con [instalador-windows.iss](instalador-windows.iss), Inno Setup). Instala para tu usuario sin pedir administrador, crea los accesos directos y se desinstala desde Configuración → Aplicaciones.
 - `LimpiaGuarda-Mac-AppleSilicon.dmg` y `LimpiaGuarda-Mac-Intel.dmg`.
 
-Para publicar una versión: cambiá `VERSION` en `limpia_guarda.py`, hacé commit y subí un tag con ese número (`git tag v0.5` y `git push origin v0.5`). Se crea un **Release** con los tres instaladores y las instrucciones de qué bajar.
+Para publicar una versión: cambiá `VERSION` en `limpia_guarda.py`, hacé commit y subí un tag con ese número (`git tag v1.0.0` y `git push origin v1.0.0`). Se crea un **Release** con los tres instaladores y las instrucciones de qué bajar.
 
 Links fijos a la última versión, para compartir:
 - https://github.com/teskabot/APP-Limpia-Guarda-by-TeskaDEV/releases/latest/download/LimpiaGuarda-Windows-Instalador.exe
@@ -40,43 +40,46 @@ Diferencias con Windows:
 
 También se puede correr desde una Mac con Python: `python3 limpia_guarda.py` (con Homebrew hace falta `brew install python-tk`).
 
-## INICIO
+## La interfaz (v1.0)
 
-Todo lo importante está en una sola pantalla:
+Cuatro pestañas: **limpiar**, **guardar en hdd**, **explorar** y **auto**. Las que hacen algo funcionan como un asistente: una pregunta por pantalla, un botón principal y arriba una barrita que dice en qué paso estás. Lo avanzado no desaparece, queda a un clic ("opciones", "ver", explorar).
 
-1. Elegí la **CARPETA** (por defecto tu usuario; también podés elegir un disco entero) y dale a **▶ ANALIZAR**. Mira todo **sin tocar nada**.
-2. Arriba aparecen tres números: **para limpiar**, **para guardar en el HDD** y **libres** en el disco. La barra muestra el disco: en verde lo que se liberaría limpiando, en celeste lo que se liberaría guardando en el HDD.
-3. Abajo hay una **tarjeta por categoría**. Un clic la prende `[■]` o la apaga `[ ]`, y los números y botones se actualizan al toque. Tu elección se recuerda.
-   - 🟢 **SEGURO** (prendidas por defecto): papelera, temporales con más de 1 día, caches de npm/pip/Python/Next/Vite/VS Code/Cursor, `node_modules`/`.venv` de proyectos quietos hace +30 días (solo si tienen `package.json`/`requirements`, así se reinstalan con un comando), instaladores e ISOs viejos en Descargas.
-   - 🟡 **REVISAR** (apagadas por defecto): ZIP/RAR viejos en Descargas y duplicados exactos (mismo SHA-256).
-   - 🔵 **→ HDD** (prendidas por defecto): proyectos de DAW/video sin tocar hace +6 meses (**como carpeta entera**, para no romper los samples) y WAV/video/RAW de 20 MB o más sin tocar hace +6 meses.
-   - **ver ›** te lleva al detalle de esa categoría.
-4. **✖ LIMPIAR X GB** borra lo de las tarjetas prendidas, con una sola confirmación que lista todo y avisa de cualquier riesgo.
-5. **→ GUARDAR X GB EN EL HDD** mueve al HDD lo de las tarjetas prendidas. Si todavía no elegiste el disco, te lo pide. Las caches usadas en los últimos 2 días nunca se marcan, porque pueden estar abiertas.
+Colores: **verde** es lo principal (botones, pestaña activa, limpiar y listo), **naranja** son los números y los avisos, **celeste** es todo lo del HDD y **rojo** es borrar o error.
 
-Al terminar ves "✔ liberaste X" sobre la barra, y arriba a la derecha queda el contador de **liberado en total**.
+- Arriba a la derecha está siempre lo **liberado** en total y el **hdd** elegido (clic para cambiarlo).
+- El **log** completo está en el link chiquito a la derecha de las pestañas, o haciendo clic en la última línea de abajo.
+- Atajos: **Enter** sigue al próximo paso · **Esc** vuelve un paso (o cancela lo que está corriendo) · **F5** analiza · **Ctrl+1…4** cambia de pestaña (Cmd en Mac).
+
+## limpiar
+
+1. **¿Qué querés revisar?** Por defecto tu usuario; también una carpeta o un disco entero (clic en la ruta, o arrastrá una carpeta encima). **analizar** mira todo **sin tocar nada**.
+2. **Encontré X para borrar.** Una línea por categoría, con su tamaño. Ya viene marcado lo seguro; un clic en una línea la saca o la suma, y tu elección se recuerda. **ver** te lleva a la lista completa en explorar.
+   - Marcadas de entrada: papelera, temporales con más de 1 día, caches de npm/pip/Python/Next/Vite/VS Code/Cursor, `node_modules`/`.venv` de proyectos quietos hace +30 días (solo si tienen `package.json`/`requirements`, así se reinstalan con un comando), instaladores e ISOs viejos en Descargas.
+   - Desmarcadas de entrada (dicen *revisar*): ZIP/RAR viejos en Descargas y duplicados exactos (mismo SHA-256).
+   - Las caches usadas en los últimos 2 días nunca se tocan, porque pueden estar abiertas.
+3. **¿Borro X para siempre?** Muestra qué se borra y cualquier aviso. **sí, limpiar** y al final ves "✔ Liberaste X".
 
 ### Duplicados
-De cada grupo de copias idénticas se conserva siempre la más vieja. En la tarjeta ves cuántas copias están en la **misma carpeta** que el original y cuántas en **otra carpeta**. En DETALLE cada original aparece como "✔ se conserva: …" con sus copias abajo, y cada copia dice **MISMA carpeta** u **OTRA carpeta**. Elegir un grupo marca solo sus copias, nunca el original.
+De cada grupo de copias idénticas se conserva siempre la más vieja. En explorar → recomendado cada original aparece como "✔ se conserva: …" con sus copias abajo, y cada copia dice **MISMA carpeta** u **OTRA carpeta**. Elegir un grupo marca solo sus copias, nunca el original.
 
-## DETALLE
+## guardar en hdd
 
-Las listas completas:
-- **RECOMENDADO**: lo mismo que las tarjetas, ítem por ítem.
-- **ARCHIVOS PESADOS**: los 100 archivos más grandes. Los de programas o sistema aparecen en gris.
-- **CARPETAS**: qué carpeta ocupa más, con el porcentaje y sus subcarpetas.
+1. **¿Dónde está tu disco externo?** El HDD, o una carpeta adentro (tipo `E:\Guardado`). Se recuerda.
+2. **¿Qué mando al HDD?** Las sugerencias del análisis (proyectos de DAW/video sin tocar hace +6 meses, **como carpeta entera** para no romper los samples, y WAV/video/RAW de 20 MB o más sin tocar hace +6 meses) más lo que sumes con **+ carpeta**, **+ archivos** o arrastrando.
+3. **¿Muevo X al HDD?** **mover y verificar**. En **opciones** elegís *mover* o *solo copiar*, el filtro por antigüedad (solo para lo elegido a mano) y si se guarda con la ruta completa.
 
-Seleccionás filas (Ctrl o Shift para varias) y elegís:
-- **→ GUARDA MANUAL**: las carga en GUARDA MANUAL con ruta completa y el filtro en *todo*, así un proyecto no queda mitad en la PC y mitad en el HDD.
-- **✖ BORRAR SELECCIÓN**: borra para siempre, con confirmación y log en `C:\Users\<vos>\LimpiaGuarda_logs\`.
-- **ABRIR UBICACIÓN**: abre el Explorador con el archivo marcado.
+## explorar
 
-## MAPA
+Para mirar a fondo. Arriba elegís la vista:
+- **mapa**: bloques tipo WizTree, cada rectángulo es del tamaño de lo que ocupa. Clic selecciona, doble clic entra a la carpeta, clic derecho o ▲ SUBIR vuelve. Los colores marcan el tipo (media/RAW, proyectos DAW, instaladores/comprimidos, otros). Lo de menos de 512 KB se junta en "otros".
+- **recomendado**: lo mismo que limpiar y guardar, ítem por ítem.
+- **archivos pesados**: los 100 archivos más grandes. Los de programas o sistema aparecen en gris.
+- **carpetas**: qué carpeta ocupa más, con el porcentaje y sus subcarpetas.
 
-Bloques tipo WizTree: cada rectángulo es del tamaño de lo que ocupa.
-- Pasá el mouse para ver ruta y tamaño. **Clic** selecciona, y los botones de abajo funcionan sobre eso.
-- **Doble clic** entra a la carpeta. **Clic derecho** o ▲ SUBIR vuelve.
-- Los colores marcan el tipo: media/RAW, proyectos DAW, instaladores/comprimidos y otros. Lo de menos de 512 KB se junta en "otros".
+Seleccionás (Ctrl o Shift para varias) y elegís:
+- **guardar en hdd**: lo suma al paso 2 de guardar en hdd, con ruta completa y el filtro en *todo*, así un proyecto no queda mitad en la PC y mitad en el HDD.
+- **borrar**: borra para siempre, con confirmación y log en `C:\Users\<vos>\LimpiaGuarda_logs\`.
+- **abrir ubicación**: abre el Explorador con el archivo marcado.
 
 ## Lo que el análisis NUNCA recomienda
 - Nada dentro de `AppData`, `Program Files`, `Windows`, `.git` o `site-packages`. Cuenta para el tamaño, pero no se toca, porque romperías programas.
@@ -86,16 +89,7 @@ Bloques tipo WizTree: cada rectángulo es del tamaño de lo que ocupa.
 
 Además, la app se niega a borrar la raíz de un disco, tu carpeta de usuario, Escritorio, Documentos, Descargas (la carpeta en sí) y carpetas del sistema.
 
-## GUARDA MANUAL
-
-Para elegir a mano qué mandar al HDD:
-1. **ELEGIR…**: el HDD externo (o una carpeta adentro, tipo `E:\Guardado`). Es el mismo que muestra INICIO.
-2. Agregá carpetas o archivos, o mandalos desde DETALLE o MAPA.
-3. **FILTRO**: *todo / +1 mes / +3 / +6 meses / +1 / +2 años*. Solo se procesan archivos cuya **última modificación** es más vieja que eso. Lo reciente se queda en la PC.
-4. **Guardar con ruta completa**: en el HDD queda `E:\Guardado\C\Users\Teska\Musica\...`. Sirve para saber siempre de dónde vino cada cosa.
-5. Modo **MOVER AL HDD** (libera espacio) o **SOLO COPIA**, y ▶ EJECUTAR.
-
-### Reglas de seguridad al guardar
+## Reglas de seguridad al guardar en el HDD
 - Un original se borra **solo** si el SHA-256 de la copia, releída desde el disco, coincide con el original.
 - Si el archivo cambió mientras se copiaba (por ejemplo, un proyecto abierto en el DAW), no se borra.
 - Copia primero a `.lgpart` y recién renombra cuando verificó.
@@ -103,22 +97,22 @@ Para elegir a mano qué mandar al HDD:
 - Avisa si el origen está en OneDrive (borrarlo localmente lo borra de la nube) o si está en el mismo disco que el destino.
 - Cada ejecución deja un log-recibo en `<destino>\_limpiaguarda_logs\`.
 
-## AUTO
+## auto
 
 Dos tareas pueden correr solas con el **Programador de tareas de Windows**, aunque la app esté cerrada. No abren ninguna ventana.
-- **Limpieza semanal**: lo mismo que LIMPIAR con las tarjetas SEGURO.
-- **Sesiones viejas**: lo mismo que GUARDAR con las tarjetas → HDD.
+- **Limpieza semanal**: lo mismo que limpiar con lo marcado de entrada.
+- **Sesiones viejas**: lo mismo que guardar en hdd con las sugerencias.
 
-1. Elegí cuándo (*cada domingo…* o *el día 1 de cada mes*) y la hora.
-2. **PROGRAMAR**: te muestra exactamente qué va a hacer sin preguntar y lo registra en la carpeta `LimpiaGuarda` del Programador. Usa la CARPETA y el HDD que tengas elegidos en ese momento.
-3. **PROBAR AHORA** lo corre ya mismo, igual que Windows. **QUITAR** lo saca del Programador.
+1. **¿Qué querés que haga solo?** Elegí la tarea; al lado ves si ya está programada.
+2. **¿Cuándo?** (*cada domingo…* o *el día 1 de cada mes*) y la hora. Ahí mismo dice qué va a hacer sin preguntar. **programar** la registra en la carpeta `LimpiaGuarda` del Programador, con la carpeta y el HDD que tengas elegidos en ese momento.
+3. Si ya estaba programada, en el paso 2 aparecen **probar ahora** (la corre ya, igual que Windows) y **quitar**.
 
-Si la PC estaba apagada a esa hora, la tarea corre apenas se prende. Cada corrida deja una línea en `C:\Users\<vos>\LimpiaGuarda_logs\programado.log`, además del log de borrado o del HDD. Esa línea se ve en ÚLTIMAS CORRIDAS y al abrir la app.
+Si la PC estaba apagada a esa hora, la tarea corre apenas se prende. Cada corrida deja una línea en `C:\Users\<vos>\LimpiaGuarda_logs\programado.log`, además del log de borrado o del HDD. Esa línea se ve en **últimas corridas** (paso 1 de auto) y al abrir la app.
 
 ### Reglas del modo automático
-- **Limpieza**: solo lo 🟢 SEGURO, y **nunca vacía la papelera**, porque es tu red de seguridad. Vaciarla queda solo para LIMPIAR en INICIO, que pide confirmación. Las caches usadas en los últimos 2 días se saltean, por si VS Code, Cursor o un `next dev` están abiertos.
+- **Limpieza**: solo lo seguro, y **nunca vacía la papelera**, porque es tu red de seguridad. Vaciarla queda solo para la pestaña limpiar, que pide confirmación. Las caches usadas en los últimos 2 días se saltean, por si VS Code, Cursor o un `next dev` están abiertos.
 - **Sesiones viejas**: si el HDD no está conectado, no hace nada. Se saltea cualquier elemento que dé un aviso (OneDrive o mismo disco que el destino). Valen las mismas reglas de SHA-256 de siempre.
-- Nunca busca duplicados ni toca lo de REVISAR.
+- Nunca busca duplicados ni toca lo de revisar.
 
 También se puede correr a mano desde una terminal:
 ```
@@ -126,9 +120,9 @@ python limpia_guarda.py --preset limpieza --root C:\Users\Teska
 python limpia_guarda.py --preset sesiones --root C:\Users\Teska --dest E:\Guardado
 ```
 
-## LOG
+## log
 
-Todo lo que pasó en la sesión. La última línea se ve siempre abajo de la ventana; con un clic sobre ella venís acá.
+Todo lo que pasó en la sesión. Se abre con el link **log** a la derecha de las pestañas. La última línea se ve siempre abajo de la ventana; con un clic sobre ella venís acá.
 
 ⚠ Los borrados son definitivos y no pasan por la papelera, porque si no, no liberarían espacio.
 
@@ -141,7 +135,7 @@ La primera vez que abras Limpia&Guarda, la app trae sola lo anterior:
 
 El archivo para abrir la app no lleva `&` en el nombre (`Abrir LimpiaGuarda.bat`) porque Windows corta los `.bat` en el `&`.
 
-## Ideas v0.5
+## Ideas para después de la 1.0
 - Presets editables (qué categorías, cuántos días).
 - Aviso de Windows (toast) al terminar una corrida automática.
 - Resaltar en el mapa lo que está recomendado.

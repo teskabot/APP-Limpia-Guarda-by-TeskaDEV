@@ -1,5 +1,5 @@
 ; Instalador de Windows (Inno Setup). Lo compila GitHub Actions:
-;   iscc /DMyVersion=0.4.1 instalador-windows.iss
+;   iscc /DMyVersion=1.0.0 instalador-windows.iss
 ; Espera la app ya armada en dist\LimpiaGuarda\ (PyInstaller en modo carpeta).
 
 #ifndef MyVersion
